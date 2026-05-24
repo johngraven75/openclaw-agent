@@ -29,6 +29,7 @@ Build 1.0.5 creates the Windows installer line for OpenClaw and carries forward 
 - Added frozen-app asset handling for PyInstaller.
 - Added automatic browser open when running the packaged Windows `OpenClaw.exe`.
 - Built a Windows executable with PyInstaller.
+- Added tracked Windows packaging scripts under `packaging/windows`.
 - Added a local VS Code extension host adapter.
 - Add-on installs now download the VSIX into OpenClaw and install it into the local VS Code host with `code --install-extension`.
 - Added VS Code host status to the Add-ons panel.
@@ -52,18 +53,21 @@ Build 1.0.5 creates the Windows installer line for OpenClaw and carries forward 
 - Installed app health endpoint returned Build 1.0.5 from `%LOCALAPPDATA%\Programs\OpenClaw Agent\workspace`.
 - Installed app VS Code host endpoint detected VS Code 1.121.0.
 - Installed app successfully installed `ms-python.python-2026.4.0.vsix` into VS Code with return code 0.
-- Desktop launchers verified: `START OpenClaw Build 1.0.5.bat` and `OpenClaw Build 1.0.5.lnk`.
+- Rebuilt setup creates `START OpenClaw Build 1.0.5.bat` and `OpenClaw Build 1.0.5.lnk` in both detected Desktop locations: `C:\Users\johng\Desktop` and `C:\Users\johng\OneDrive\Documents\Desktop`.
+- Installed app after rebuilt setup returned Build 1.0.5 and detected VS Code host 1.121.0.
+- In-app browser verification loaded `http://127.0.0.1:7865/`, confirmed page title `OpenClaw 1.0.5`, confirmed the splash logo element, and confirmed visible Hugging Face and VS Code host controls.
+- Hugging Face model browsing was verified through the installed app POST route and returned live text-generation model results.
 
-## Remaining Release Checks
+## Release Checks
 
-- GitHub repository upload and release asset verification.
+- GitHub repository upload and release asset verification completed for tag `v1.0.5`.
 
 ## Artifacts
 
 - Windows setup EXE: `OpenClaw-Build-1.0.5-Windows-Setup.exe`
-  - SHA256: `9FD59F6D1007D3057DE96CF897751E8873CC48976DEE8D3867969B2A5F76633F`
+  - SHA256: `3325E9B579EB03206DD994FE5315C7A5FCD5FA21D02511E7582B6A7662F38377`
 - Portable Windows ZIP: `OpenClaw-Build-1.0.5-Portable-Windows.zip`
-  - SHA256: `C5030E2858B221855ED34777A01666A27A3C402A81C07C13706F729662556993`
+  - SHA256: `37F29EC83C5D9A96A889C83E4B7B227B6E260D23833B3CE24EA99A6C1A4C69B7`
 - Frozen executable: `OpenClaw.exe`
   - SHA256: `A1CCAF086D2868E055304720495CB867C462A6F25EDF2C40BCD29DD9772E81A6`
 
@@ -72,4 +76,4 @@ Build 1.0.5 creates the Windows installer line for OpenClaw and carries forward 
 - Hugging Face model execution requires a valid Hugging Face token with Inference Providers permission.
 - Some models are gated, not live, not routed, or require provider billing.
 - Video generation is exposed as a provider-endpoint adapter because Hugging Face/provider video tasks vary by provider and response format.
-- VS Code extensions are downloaded and stored, but executing their VS Code APIs requires an extension host adapter.
+- VS Code extensions are downloaded into OpenClaw's plugin store and installed into the local VS Code extension host when VS Code CLI is available.
