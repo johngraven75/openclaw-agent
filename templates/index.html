@@ -1,0 +1,253 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OpenClaw {{ version }}</title>
+  <link rel="stylesheet" href="/static/css/style.css">
+  <script defer src="https://unpkg.com/lucide@latest/dist/umd/lucide.js"></script>
+  <script defer src="/static/js/app.js"></script>
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark">OC</div>
+        <div>
+          <h1>OpenClaw</h1>
+          <p>{{ build_label }}</p>
+        </div>
+      </div>
+      <nav class="nav-list" aria-label="Main">
+        <button class="nav-item active" data-view="chat"><i data-lucide="message-square"></i><span>Chat</span></button>
+        <button class="nav-item" data-view="models"><i data-lucide="brain-circuit"></i><span>Hugging Face</span></button>
+        <button class="nav-item" data-view="tools"><i data-lucide="terminal-square"></i><span>Tools</span></button>
+        <button class="nav-item" data-view="plugins"><i data-lucide="blocks"></i><span>Add-ons</span></button>
+        <button class="nav-item" data-view="files"><i data-lucide="folder-code"></i><span>Workspace</span></button>
+        <button class="nav-item" data-view="settings"><i data-lucide="settings"></i><span>Settings</span></button>
+      </nav>
+      <div class="status-card">
+        <span class="status-dot"></span>
+        <div>
+          <strong id="healthLabel">Checking</strong>
+          <p id="healthMeta">Starting OpenClaw</p>
+        </div>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div>
+          <h2 id="viewTitle">Chat</h2>
+          <p id="viewSubtitle">Conversational coding, reasoning, browsing, tools, and multimodal workflows.</p>
+        </div>
+        <div class="provider-strip">
+          <select id="providerSelect" title="Provider">
+            <option value="local">Local reasoning</option>
+            <option value="huggingface">Hugging Face</option>
+            <option value="openai">OpenAI</option>
+            <option value="ollama">Ollama</option>
+            <option value="custom">Custom endpoint</option>
+          </select>
+          <input id="modelInput" placeholder="Model id">
+          <button id="saveProviderBtn" class="icon-btn" title="Save provider"><i data-lucide="save"></i></button>
+        </div>
+      </header>
+
+      <section class="view active" id="view-chat">
+        <div class="chat-layout">
+          <section class="conversation" id="conversation" aria-live="polite"></section>
+          <form class="composer" id="chatForm">
+            <textarea id="promptInput" rows="4" placeholder="Ask OpenClaw to reason, write code, browse, test, create media, or manage plugins."></textarea>
+            <div class="composer-actions">
+              <button type="button" id="voiceBtn" class="ghost"><i data-lucide="mic"></i><span>Speak</span></button>
+              <button type="submit" class="primary"><i data-lucide="send"></i><span>Send</span></button>
+            </div>
+          </form>
+        </div>
+      </section>
+
+      <section class="view" id="view-models">
+        <div class="panel-grid models-grid">
+          <section class="panel span-2">
+            <div class="panel-head">
+              <div>
+                <h3>Hugging Face Model Browser</h3>
+                <p>Browse Hub models, provider-routed chat models, and select one for OpenClaw.</p>
+              </div>
+              <button id="loadRouterModelsBtn" class="secondary"><i data-lucide="cloud"></i><span>Live chat models</span></button>
+            </div>
+            <div class="model-search">
+              <input id="hfQuery" placeholder="Search models, e.g. llama, qwen, flux, whisper">
+              <select id="hfPipeline">
+                <option value="">Any task</option>
+                <option value="text-generation">Text generation</option>
+                <option value="text-to-image">Text to image</option>
+                <option value="text-to-video">Text to video</option>
+                <option value="automatic-speech-recognition">Speech to text</option>
+                <option value="image-text-to-text">Vision language</option>
+                <option value="feature-extraction">Embeddings</option>
+              </select>
+              <select id="hfProvider">
+                <option value="">Any provider</option>
+                <option value="all">Any inference provider</option>
+                <option value="hf-inference">HF Inference</option>
+                <option value="together">Together</option>
+                <option value="sambanova">SambaNova</option>
+                <option value="fireworks-ai">Fireworks</option>
+                <option value="deepinfra">DeepInfra</option>
+                <option value="fal-ai">Fal AI</option>
+              </select>
+              <button id="hfSearchBtn" class="primary"><i data-lucide="search"></i><span>Search</span></button>
+            </div>
+            <div class="results-list" id="hfResults"></div>
+          </section>
+          <section class="panel">
+            <div class="panel-head">
+              <div>
+                <h3>Selected Model</h3>
+                <p>Use directly in Chat or test from here.</p>
+              </div>
+            </div>
+            <div class="selected-model" id="selectedModelCard">
+              <span>No Hugging Face model selected yet.</span>
+            </div>
+            <label class="field">
+              <span>Provider policy</span>
+              <select id="hfPolicy">
+                <option value="fastest">Fastest</option>
+                <option value="cheapest">Cheapest</option>
+                <option value="preferred">Preferred</option>
+              </select>
+            </label>
+            <textarea id="hfTestPrompt" rows="5">Explain what you can do as OpenClaw in two sentences.</textarea>
+            <button id="hfTestBtn" class="primary wide"><i data-lucide="play"></i><span>Test selected model</span></button>
+            <pre id="hfTestOutput" class="output"></pre>
+          </section>
+        </div>
+      </section>
+
+      <section class="view" id="view-tools">
+        <div class="panel-grid">
+          <section class="panel">
+            <div class="panel-head">
+              <div>
+                <h3>Web Search</h3>
+                <p>Live internet lookup with source URLs.</p>
+              </div>
+            </div>
+            <input id="searchQuery" placeholder="Search the web">
+            <button id="searchBtn" class="primary wide"><i data-lucide="search"></i><span>Search</span></button>
+            <div id="searchResults" class="results-list compact"></div>
+          </section>
+          <section class="panel">
+            <div class="panel-head">
+              <div>
+                <h3>Code Runner</h3>
+                <p>Execute workspace scripts and inspect output.</p>
+              </div>
+            </div>
+            <select id="codeLanguage">
+              <option value="python">Python</option>
+              <option value="javascript">JavaScript</option>
+              <option value="powershell">PowerShell</option>
+            </select>
+            <textarea id="codeInput" rows="10">print("OpenClaw code runner ready")</textarea>
+            <button id="runCodeBtn" class="primary wide"><i data-lucide="play"></i><span>Run code</span></button>
+            <pre id="codeOutput" class="output"></pre>
+          </section>
+          <section class="panel">
+            <div class="panel-head">
+              <div>
+                <h3>Media</h3>
+                <p>Generate images through Hugging Face or provider endpoints.</p>
+              </div>
+            </div>
+            <textarea id="imagePrompt" rows="6" placeholder="Describe an image to create"></textarea>
+            <button id="imageBtn" class="primary wide"><i data-lucide="image"></i><span>Create image</span></button>
+            <div id="imageResult" class="media-result"></div>
+          </section>
+        </div>
+      </section>
+
+      <section class="view" id="view-plugins">
+        <div class="panel-grid">
+          <section class="panel span-2">
+            <div class="panel-head">
+              <div>
+                <h3>VS Code Add-on Catalog</h3>
+                <p>Search OpenVSX, download VSIX packages, and install into OpenClaw's plugin store.</p>
+              </div>
+            </div>
+            <div class="model-search">
+              <input id="pluginQuery" placeholder="Search extensions, e.g. python, prettier, rust">
+              <button id="pluginSearchBtn" class="primary"><i data-lucide="search"></i><span>Search</span></button>
+              <button id="refreshInstalledPluginsBtn" class="secondary"><i data-lucide="refresh-cw"></i><span>Installed</span></button>
+            </div>
+            <div id="pluginResults" class="results-list"></div>
+          </section>
+          <section class="panel">
+            <div class="panel-head">
+              <div>
+                <h3>Installed Add-ons</h3>
+                <p>Ready for adapter wiring and future host execution.</p>
+              </div>
+            </div>
+            <div id="installedPlugins" class="results-list compact"></div>
+          </section>
+        </div>
+      </section>
+
+      <section class="view" id="view-files">
+        <div class="panel-grid">
+          <section class="panel span-2">
+            <div class="panel-head">
+              <div>
+                <h3>Workspace Files</h3>
+                <p>Files created by tools, code execution, and generated artifacts.</p>
+              </div>
+              <button id="refreshFilesBtn" class="secondary"><i data-lucide="refresh-cw"></i><span>Refresh</span></button>
+            </div>
+            <div id="fileList" class="results-list"></div>
+          </section>
+        </div>
+      </section>
+
+      <section class="view" id="view-settings">
+        <div class="panel-grid settings-grid">
+          <section class="panel">
+            <div class="panel-head">
+              <div>
+                <h3>Provider Keys</h3>
+                <p>Stored locally in openclaw_config.json.</p>
+              </div>
+            </div>
+            <label class="field"><span>Hugging Face token</span><input id="huggingface_api_key" type="password" placeholder="hf_..."></label>
+            <label class="field"><span>OpenAI key</span><input id="openai_api_key" type="password" placeholder="sk-..."></label>
+            <label class="field"><span>Custom endpoint</span><input id="custom_endpoint" placeholder="https://.../v1"></label>
+            <label class="field"><span>Custom API key</span><input id="custom_api_key" type="password"></label>
+            <label class="field"><span>Ollama endpoint</span><input id="ollama_endpoint" placeholder="http://localhost:11434"></label>
+            <button id="saveSettingsBtn" class="primary wide"><i data-lucide="save"></i><span>Save settings</span></button>
+          </section>
+          <section class="panel">
+            <div class="panel-head">
+              <div>
+                <h3>Capability Matrix</h3>
+                <p>Current build integrations.</p>
+              </div>
+            </div>
+            <div class="matrix">
+              <div><strong>Reasoning</strong><span>Local planner plus provider LLMs</span></div>
+              <div><strong>Hugging Face</strong><span>Browse, select, chat, image tasks</span></div>
+              <div><strong>Internet</strong><span>DuckDuckGo HTML search endpoint</span></div>
+              <div><strong>Code</strong><span>Python, JavaScript, PowerShell</span></div>
+              <div><strong>Add-ons</strong><span>OpenVSX download and plugin store</span></div>
+              <div><strong>Media</strong><span>Image endpoint live; video provider adapter</span></div>
+            </div>
+          </section>
+        </div>
+      </section>
+    </main>
+  </div>
+</body>
+</html>

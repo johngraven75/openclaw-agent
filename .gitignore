@@ -1,0 +1,15 @@
+.venv/
+node_modules/
+__pycache__/
+*.pyc
+openclaw_config.json
+package.json
+package-lock.json
+.openclaw-test.pid
+openclaw-ui-*.png
+generated/*
+workspace/*
+plugins/vscode/*
+!generated/.gitkeep
+!workspace/.gitkeep
+!plugins/vscode/.gitkeep

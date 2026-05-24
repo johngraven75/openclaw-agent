@@ -1,0 +1,368 @@
+const state = {
+  messages: [],
+  selectedHFModel: "",
+  settings: {},
+};
+
+const $ = (id) => document.getElementById(id);
+
+async function api(path, options = {}) {
+  const response = await fetch(path, {
+    headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+    ...options,
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || data.ok === false) {
+    throw new Error(data.error || `Request failed: ${response.status}`);
+  }
+  return data;
+}
+
+function setOutput(id, text) {
+  const el = $(id);
+  if (el) el.textContent = typeof text === "string" ? text : JSON.stringify(text, null, 2);
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
+}
+
+function tags(values = [], limit = 5) {
+  return values.slice(0, limit).map((tag) => `<span class="tag">${escapeHtml(tag)}</span>`).join("");
+}
+
+function switchView(view) {
+  document.querySelectorAll(".nav-item").forEach((btn) => btn.classList.toggle("active", btn.dataset.view === view));
+  document.querySelectorAll(".view").forEach((section) => section.classList.toggle("active", section.id === `view-${view}`));
+  const titles = {
+    chat: ["Chat", "Conversational coding, reasoning, browsing, tools, and multimodal workflows."],
+    models: ["Hugging Face", "Browse, select, and use Hugging Face models and LLMs in app."],
+    tools: ["Tools", "Search the web, run code, and generate media."],
+    plugins: ["Add-ons", "Search and install VS Code-compatible add-ons into OpenClaw."],
+    files: ["Workspace", "Inspect generated files and scripts."],
+    settings: ["Settings", "Configure local provider tokens and runtime endpoints."],
+  };
+  $("viewTitle").textContent = titles[view][0];
+  $("viewSubtitle").textContent = titles[view][1];
+}
+
+function addMessage(role, content, meta = "") {
+  state.messages.push({ role, content });
+  const node = document.createElement("article");
+  node.className = `message ${role === "user" ? "user" : "assistant"}`;
+  node.innerHTML = `${escapeHtml(content)}${meta ? `<small>${escapeHtml(meta)}</small>` : ""}`;
+  $("conversation").appendChild(node);
+  $("conversation").scrollTop = $("conversation").scrollHeight;
+}
+
+async function loadHealth() {
+  try {
+    const health = await api("/api/health");
+    $("healthLabel").textContent = "Ready";
+    $("healthMeta").textContent = `${health.build} · ${health.plugin_count} add-ons`;
+  } catch (error) {
+    $("healthLabel").textContent = "Offline";
+    $("healthMeta").textContent = error.message;
+  }
+}
+
+async function loadSettings() {
+  const data = await api("/api/settings");
+  state.settings = data.settings;
+  $("providerSelect").value = state.settings.provider || "local";
+  $("modelInput").value = state.settings.model || "openclaw-local";
+  ["huggingface_api_key", "openai_api_key", "custom_endpoint", "custom_api_key", "ollama_endpoint"].forEach((id) => {
+    if ($(id)) $(id).value = state.settings[id] === "set" ? "" : (state.settings[id] || "");
+  });
+  if (state.settings.model && state.settings.provider === "huggingface") {
+    selectHFModel(state.settings.model, false);
+  }
+}
+
+async function saveSettings(extra = {}) {
+  const payload = {
+    provider: $("providerSelect").value,
+    model: $("modelInput").value.trim(),
+    custom_endpoint: $("custom_endpoint")?.value.trim() || state.settings.custom_endpoint || "",
+    custom_api_key: $("custom_api_key")?.value.trim() || "set",
+    ollama_endpoint: $("ollama_endpoint")?.value.trim() || state.settings.ollama_endpoint || "",
+    huggingface_provider_policy: $("hfPolicy")?.value || "fastest",
+    ...extra,
+  };
+  ["huggingface_api_key", "openai_api_key"].forEach((id) => {
+    const value = $(id)?.value.trim();
+    if (value) payload[id] = value;
+  });
+  const data = await api("/api/settings", { method: "POST", body: JSON.stringify(payload) });
+  state.settings = data.settings;
+  $("providerSelect").value = state.settings.provider || "local";
+  $("modelInput").value = state.settings.model || "";
+  return data;
+}
+
+async function sendChat(event) {
+  event.preventDefault();
+  const prompt = $("promptInput").value.trim();
+  if (!prompt) return;
+  $("promptInput").value = "";
+  addMessage("user", prompt);
+  addMessage("assistant", "Thinking...");
+  const pending = $("conversation").lastElementChild;
+  try {
+    const data = await api("/api/chat", {
+      method: "POST",
+      body: JSON.stringify({
+        prompt,
+        messages: state.messages.slice(-12),
+        provider: $("providerSelect").value,
+        model: $("modelInput").value.trim(),
+      }),
+    });
+    pending.innerHTML = `${escapeHtml(data.reply)}<small>${escapeHtml(data.provider)} · ${escapeHtml(data.model)}</small>`;
+    state.messages.push({ role: "assistant", content: data.reply });
+  } catch (error) {
+    pending.textContent = `Error: ${error.message}`;
+  }
+}
+
+function selectHFModel(modelId, persist = true) {
+  state.selectedHFModel = modelId;
+  $("selectedModelCard").innerHTML = `<strong>${escapeHtml(modelId)}</strong><p>Selected for Hugging Face chat and tests.</p>`;
+  $("providerSelect").value = "huggingface";
+  $("modelInput").value = modelId;
+  if (persist) {
+    api("/api/huggingface/select", {
+      method: "POST",
+      body: JSON.stringify({ model: modelId, provider_policy: $("hfPolicy").value }),
+    }).then(loadSettings).catch((error) => setOutput("hfTestOutput", error.message));
+  }
+}
+
+function renderHFModels(models, router = false) {
+  const list = $("hfResults");
+  if (!models.length) {
+    list.innerHTML = `<div class="result-item">No models found.</div>`;
+    return;
+  }
+  list.innerHTML = models.map((model) => {
+    const id = model.id || model.modelId || "";
+    const providerTags = router && model.providers
+      ? model.providers.slice(0, 5).map((p) => `${p.provider}:${p.status}`)
+      : (model.pipeline_tag ? [model.pipeline_tag] : []).concat(model.tags || []);
+    const meta = router && model.providers
+      ? `${model.providers.length} providers · ${model.architecture?.input_modalities?.join(",") || "text"}`
+      : `${model.downloads || 0} downloads · ${model.likes || 0} likes`;
+    return `<article class="result-item">
+      <div class="result-title">
+        <strong>${escapeHtml(id)}</strong>
+        <button class="secondary" data-select-hf="${escapeHtml(id)}">Use</button>
+      </div>
+      <p>${escapeHtml(meta)}</p>
+      <div class="tags">${tags(providerTags, 8)}</div>
+      <a href="https://huggingface.co/${escapeHtml(id)}" target="_blank" rel="noreferrer">Open model page</a>
+    </article>`;
+  }).join("");
+}
+
+async function searchHFModels() {
+  $("hfResults").innerHTML = `<div class="result-item">Searching Hugging Face...</div>`;
+  try {
+    const data = await api("/api/huggingface/search", {
+      method: "POST",
+      body: JSON.stringify({
+        query: $("hfQuery").value.trim(),
+        pipeline: $("hfPipeline").value,
+        inference_provider: $("hfProvider").value,
+        limit: 30,
+      }),
+    });
+    renderHFModels(data.models || []);
+  } catch (error) {
+    $("hfResults").innerHTML = `<div class="result-item">Error: ${escapeHtml(error.message)}</div>`;
+  }
+}
+
+async function loadRouterModels() {
+  $("hfResults").innerHTML = `<div class="result-item">Loading Hugging Face router chat models...</div>`;
+  try {
+    const data = await api("/api/huggingface/router-models");
+    renderHFModels(data.models || [], true);
+  } catch (error) {
+    $("hfResults").innerHTML = `<div class="result-item">Error: ${escapeHtml(error.message)}</div>`;
+  }
+}
+
+async function testHFModel() {
+  const model = state.selectedHFModel || $("modelInput").value.trim();
+  if (!model) {
+    setOutput("hfTestOutput", "Select a Hugging Face model first.");
+    return;
+  }
+  setOutput("hfTestOutput", "Testing Hugging Face model...");
+  try {
+    await api("/api/huggingface/select", {
+      method: "POST",
+      body: JSON.stringify({ model, provider_policy: $("hfPolicy").value }),
+    });
+    const data = await api("/api/huggingface/test", {
+      method: "POST",
+      body: JSON.stringify({ model, prompt: $("hfTestPrompt").value.trim() }),
+    });
+    setOutput("hfTestOutput", `${data.model}\n\n${data.reply}`);
+  } catch (error) {
+    setOutput("hfTestOutput", error.message);
+  }
+}
+
+async function doWebSearch() {
+  $("searchResults").innerHTML = `<div class="result-item">Searching...</div>`;
+  try {
+    const data = await api("/api/search", { method: "POST", body: JSON.stringify({ query: $("searchQuery").value }) });
+    $("searchResults").innerHTML = (data.results || []).map((item) => `<article class="result-item">
+      <a href="${escapeHtml(item.url)}" target="_blank" rel="noreferrer"><strong>${escapeHtml(item.title)}</strong></a>
+      <p>${escapeHtml(item.snippet || "")}</p>
+    </article>`).join("");
+  } catch (error) {
+    $("searchResults").innerHTML = `<div class="result-item">Error: ${escapeHtml(error.message)}</div>`;
+  }
+}
+
+async function runCode() {
+  setOutput("codeOutput", "Running...");
+  try {
+    const data = await api("/api/code/run", {
+      method: "POST",
+      body: JSON.stringify({ language: $("codeLanguage").value, code: $("codeInput").value }),
+    });
+    setOutput("codeOutput", `Exit ${data.returncode}\n\nSTDOUT\n${data.stdout}\n\nSTDERR\n${data.stderr}\n\nFile\n${data.file}`);
+  } catch (error) {
+    setOutput("codeOutput", error.message);
+  }
+}
+
+async function createImage() {
+  $("imageResult").textContent = "Generating image...";
+  try {
+    const data = await api("/api/image", { method: "POST", body: JSON.stringify({ prompt: $("imagePrompt").value }) });
+    $("imageResult").innerHTML = `<img src="${escapeHtml(data.url)}" alt="Generated image">`;
+  } catch (error) {
+    $("imageResult").textContent = error.message;
+  }
+}
+
+function renderPluginSearch(extensions = []) {
+  $("pluginResults").innerHTML = extensions.map((entry) => {
+    const ext = entry.namespace ? entry : entry.extension || {};
+    const namespace = ext.namespace || entry.namespace || "";
+    const name = ext.name || entry.name || "";
+    const display = ext.displayName || `${namespace}.${name}`;
+    return `<article class="result-item">
+      <div class="result-title">
+        <strong>${escapeHtml(display)}</strong>
+        <button class="secondary" data-install-plugin="${escapeHtml(namespace)}|${escapeHtml(name)}">Install</button>
+      </div>
+      <p>${escapeHtml(ext.description || entry.description || "")}</p>
+      <div class="tags">${tags([namespace, name, ext.version || entry.version || ""].filter(Boolean), 4)}</div>
+    </article>`;
+  }).join("") || `<div class="result-item">No add-ons found.</div>`;
+}
+
+async function searchPlugins() {
+  $("pluginResults").innerHTML = `<div class="result-item">Searching OpenVSX...</div>`;
+  try {
+    const data = await api("/api/plugins/vscode/search", {
+      method: "POST",
+      body: JSON.stringify({ query: $("pluginQuery").value.trim(), size: 20 }),
+    });
+    renderPluginSearch(data.catalog?.extensions || data.catalog?.results || []);
+  } catch (error) {
+    $("pluginResults").innerHTML = `<div class="result-item">Error: ${escapeHtml(error.message)}</div>`;
+  }
+}
+
+async function installPlugin(namespace, extension) {
+  $("installedPlugins").innerHTML = `<div class="result-item">Installing ${escapeHtml(namespace)}.${escapeHtml(extension)}...</div>`;
+  try {
+    await api("/api/plugins/vscode/install", { method: "POST", body: JSON.stringify({ namespace, extension }) });
+    await loadInstalledPlugins();
+  } catch (error) {
+    $("installedPlugins").innerHTML = `<div class="result-item">Error: ${escapeHtml(error.message)}</div>`;
+  }
+}
+
+async function loadInstalledPlugins() {
+  const data = await api("/api/plugins/vscode/installed");
+  $("installedPlugins").innerHTML = (data.installed || []).map((plugin) => `<article class="result-item">
+    <strong>${escapeHtml(plugin.namespace)}.${escapeHtml(plugin.extension)}</strong>
+    <p>${escapeHtml(plugin.runtime_note || "")}</p>
+    <div class="tags">${tags([plugin.version, plugin.package?.publisher, plugin.package?.engines?.vscode].filter(Boolean), 4)}</div>
+  </article>`).join("") || `<div class="result-item">No installed add-ons yet.</div>`;
+  await loadHealth();
+}
+
+async function loadFiles() {
+  $("fileList").innerHTML = `<div class="result-item">Loading files...</div>`;
+  try {
+    const data = await api("/api/files");
+    $("fileList").innerHTML = `<div class="result-item"><strong>${escapeHtml(data.workspace)}</strong></div>` +
+      (data.files || []).map((file) => `<article class="result-item">
+        <strong>${escapeHtml(file.path)}</strong>
+        <p>${file.size} bytes</p>
+      </article>`).join("");
+  } catch (error) {
+    $("fileList").innerHTML = `<div class="result-item">Error: ${escapeHtml(error.message)}</div>`;
+  }
+}
+
+function startVoiceInput() {
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SpeechRecognition) {
+    addMessage("assistant", "Voice input is not available in this browser.");
+    return;
+  }
+  const recognition = new SpeechRecognition();
+  recognition.lang = "en-US";
+  recognition.interimResults = false;
+  recognition.onresult = (event) => {
+    $("promptInput").value = event.results[0][0].transcript;
+  };
+  recognition.onerror = (event) => addMessage("assistant", `Voice input error: ${event.error}`);
+  recognition.start();
+}
+
+function bindEvents() {
+  document.querySelectorAll(".nav-item").forEach((btn) => btn.addEventListener("click", () => switchView(btn.dataset.view)));
+  $("chatForm").addEventListener("submit", sendChat);
+  $("saveProviderBtn").addEventListener("click", () => saveSettings().then(loadSettings));
+  $("saveSettingsBtn").addEventListener("click", () => saveSettings().then(loadSettings));
+  $("hfSearchBtn").addEventListener("click", searchHFModels);
+  $("loadRouterModelsBtn").addEventListener("click", loadRouterModels);
+  $("hfTestBtn").addEventListener("click", testHFModel);
+  $("searchBtn").addEventListener("click", doWebSearch);
+  $("runCodeBtn").addEventListener("click", runCode);
+  $("imageBtn").addEventListener("click", createImage);
+  $("pluginSearchBtn").addEventListener("click", searchPlugins);
+  $("refreshInstalledPluginsBtn").addEventListener("click", loadInstalledPlugins);
+  $("refreshFilesBtn").addEventListener("click", loadFiles);
+  $("voiceBtn").addEventListener("click", startVoiceInput);
+  document.addEventListener("click", (event) => {
+    const hfButton = event.target.closest("[data-select-hf]");
+    if (hfButton) selectHFModel(hfButton.dataset.selectHf);
+    const pluginButton = event.target.closest("[data-install-plugin]");
+    if (pluginButton) {
+      const [namespace, extension] = pluginButton.dataset.installPlugin.split("|");
+      installPlugin(namespace, extension);
+    }
+  });
+}
+
+document.addEventListener("DOMContentLoaded", async () => {
+  bindEvents();
+  await Promise.allSettled([loadHealth(), loadSettings(), loadInstalledPlugins(), loadFiles()]);
+  addMessage("assistant", "OpenClaw is ready. Pick a Hugging Face model in the Hugging Face tab, save your token in Settings, then use it directly in Chat.");
+  if (window.lucide) window.lucide.createIcons();
+});
