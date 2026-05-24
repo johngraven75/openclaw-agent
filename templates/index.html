@@ -9,6 +9,14 @@
   <script defer src="/static/js/app.js"></script>
 </head>
 <body>
+  <div class="splash" id="splash">
+    <div class="splash-core">
+      <img src="/static/img/cinavault-build129-logo.png" alt="OpenClaw logo">
+      <h1>OpenClaw</h1>
+      <p>Loading multimodal agent workspace</p>
+      <div class="splash-bar"><span></span></div>
+    </div>
+  </div>
   <div class="app-shell">
     <aside class="sidebar">
       <div class="brand">
@@ -190,9 +198,10 @@
             <div class="panel-head">
               <div>
                 <h3>Installed Add-ons</h3>
-                <p>Ready for adapter wiring and future host execution.</p>
+                <p>OpenClaw store plus local VS Code host adapter.</p>
               </div>
             </div>
+            <div class="host-status" id="vscodeHostStatus">Checking VS Code host...</div>
             <div id="installedPlugins" class="results-list compact"></div>
           </section>
         </div>

@@ -1,10 +1,10 @@
-# OpenClaw Build 1.0.4 Notes
+# OpenClaw Build 1.0.5 Notes
 
 Date: 2026-05-24
 
 ## Build Summary
 
-Build 1.0.4 rebuilds OpenClaw as a complete local Flask application with a Copilot 365-inspired forward-facing UI, first-class Hugging Face model browsing and selection, and an OpenVSX-backed VS Code add-on catalog.
+Build 1.0.5 creates the Windows installer line for OpenClaw and carries forward the full Build 1.0.4 app surface. It adds the CinaVault Build 129 logo as the first-load splash screen, fixes the visible add-on installation flow, and packages a frozen `OpenClaw.exe` with Windows setup artifacts.
 
 ## Carried Forward
 
@@ -17,42 +17,55 @@ Build 1.0.4 rebuilds OpenClaw as a complete local Flask application with a Copil
 - Workspace file management.
 - VS Code/OpenVSX add-on catalog and installation store.
 - Build notes and numbered packaging requirement.
+- Hugging Face model browsing, router-backed model list, in-app model selection, and selected-model testing.
 
 ## New In This Build
 
-- Copilot 365 color scheme and responsive application shell.
-- Hugging Face tab for model search, provider filtering, task filtering, and one-click model selection.
-- Hugging Face router model listing via `https://router.huggingface.co/v1/models`.
-- Hugging Face chat through the current OpenAI-compatible Inference Providers endpoint.
-- Hugging Face provider policy selection: fastest, cheapest, preferred.
-- Selected-model test panel.
-- Improved settings flow for Hugging Face tokens and provider/model persistence.
-- OpenVSX add-on install stores VSIX package, extracted package metadata, and manifest.
+- Version bumped to Build 1.0.5.
+- Added the CinaVault Build 129 logo mark as `/static/img/cinavault-build129-logo.png`.
+- Added a first-load splash screen using the Build 129 logo.
+- Fixed the add-on install button UX with visible Installing, Installed, Retry, and inline error states.
+- Fixed add-on installation to use the exact OpenVSX catalog VSIX download URL when available.
+- Added frozen-app asset handling for PyInstaller.
+- Added automatic browser open when running the packaged Windows `OpenClaw.exe`.
+- Built a Windows executable with PyInstaller.
+- Added a local VS Code extension host adapter.
+- Add-on installs now download the VSIX into OpenClaw and install it into the local VS Code host with `code --install-extension`.
+- Added VS Code host status to the Add-ons panel.
+- Added default Hugging Face token loading from local environment variables `HF_TOKEN` or `HUGGINGFACE_API_KEY`.
+- Did not store the pasted `ghp_...` value as a Hugging Face token because it is a GitHub-style token and not a valid Hugging Face token format.
 
 ## Verification Completed
 
 - Python syntax check passed with `python -m py_compile app.py`.
-- Dependency install passed with `python -m pip install -r requirements.txt`.
-- Health endpoint returned Build 1.0.4, version 1.0.4, and plugin count.
-- Settings endpoint returned provider/model/workspace configuration.
-- Local chat endpoint returned a reasoning-mode response.
-- Python code runner executed a script and returned `runner ok`.
-- Hugging Face Hub search returned selectable text-generation models.
-- Hugging Face router model listing returned live provider-backed chat models.
-- Hugging Face model detail lookup returned metadata for `openai/gpt-oss-120b`.
-- Hugging Face selection endpoint persisted provider `huggingface` and model `openai/gpt-oss-120b`.
-- File listing endpoint returned workspace contents.
-- OpenVSX search returned VS Code-compatible add-on catalog results.
-- Browser smoke test rendered the desktop UI with no console errors.
-- Mobile browser smoke test rendered the Hugging Face model browser with no console errors, 128 router model cards, and 20 add-on results.
-- Desktop install completed to `C:\Users\johng\Desktop\OpenClaw-Agent`.
-- Desktop launcher created at `C:\Users\johng\Desktop\START OpenClaw Build 1.0.4.bat`.
-- Installed app health endpoint returned Build 1.0.4 from the Desktop install.
-- Launcher hardened to reuse existing dependency installs and open the running app instead of colliding with an active server.
+- Build 1.0.5 health endpoint returned version 1.0.5 on a source run.
+- OpenVSX catalog install endpoint installed the Python extension using the searched catalog download URL.
+- PyInstaller completed and produced `dist\OpenClaw.exe`.
+- Frozen `OpenClaw.exe` health endpoint returned Build 1.0.5.
+- Frozen `OpenClaw.exe` served the splash HTML with `/static/img/cinavault-build129-logo.png`.
+- Frozen `OpenClaw.exe` served the Build 129 logo PNG with HTTP 200.
+- Frozen `OpenClaw.exe` installed the Python OpenVSX extension through the updated add-on route.
+- Source run detected VS Code host CLI at `C:\Users\johng\AppData\Local\Programs\Microsoft VS Code\bin\code.CMD`.
+- Source run installed `ms-python.python-2026.4.0.vsix` into VS Code with return code 0.
+- Final Windows setup EXE installed Build 1.0.5 to `%LOCALAPPDATA%\Programs\OpenClaw Agent`.
+- Installed executable hash matched the freshly frozen `dist\OpenClaw.exe`.
+- Installed app health endpoint returned Build 1.0.5 from `%LOCALAPPDATA%\Programs\OpenClaw Agent\workspace`.
+- Installed app VS Code host endpoint detected VS Code 1.121.0.
+- Installed app successfully installed `ms-python.python-2026.4.0.vsix` into VS Code with return code 0.
+- Desktop launchers verified: `START OpenClaw Build 1.0.5.bat` and `OpenClaw Build 1.0.5.lnk`.
 
 ## Remaining Release Checks
 
 - GitHub repository upload and release asset verification.
+
+## Artifacts
+
+- Windows setup EXE: `OpenClaw-Build-1.0.5-Windows-Setup.exe`
+  - SHA256: `9FD59F6D1007D3057DE96CF897751E8873CC48976DEE8D3867969B2A5F76633F`
+- Portable Windows ZIP: `OpenClaw-Build-1.0.5-Portable-Windows.zip`
+  - SHA256: `C5030E2858B221855ED34777A01666A27A3C402A81C07C13706F729662556993`
+- Frozen executable: `OpenClaw.exe`
+  - SHA256: `A1CCAF086D2868E055304720495CB867C462A6F25EDF2C40BCD29DD9772E81A6`
 
 ## Known Truthful Limits
 

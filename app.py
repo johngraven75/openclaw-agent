@@ -5,8 +5,11 @@ import json
 import os
 import shutil
 import subprocess
+import sys
+import threading
 import time
 import uuid
+import webbrowser
 import zipfile
 from urllib.parse import quote
 from dataclasses import dataclass
@@ -20,9 +23,14 @@ from flask_cors import CORS
 
 
 APP_NAME = "OpenClaw"
-VERSION = "1.0.4"
-BUILD_LABEL = "Build 1.0.4"
-ROOT = Path(__file__).resolve().parent
+VERSION = "1.0.5"
+BUILD_LABEL = "Build 1.0.5"
+if getattr(sys, "frozen", False):
+    ROOT = Path(sys.executable).resolve().parent
+    ASSET_ROOT = Path(getattr(sys, "_MEIPASS", ROOT))
+else:
+    ROOT = Path(__file__).resolve().parent
+    ASSET_ROOT = ROOT
 CONFIG_PATH = ROOT / "openclaw_config.json"
 WORKSPACE = ROOT / "workspace"
 GENERATED = ROOT / "generated"
@@ -46,6 +54,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "custom_api_key": "",
     "ollama_endpoint": "http://localhost:11434",
     "reasoning_style": "plan-act-check",
+    "vscode_host_enabled": True,
     "workspace": str(WORKSPACE),
 }
 
@@ -54,10 +63,17 @@ def load_config() -> dict[str, Any]:
     if CONFIG_PATH.exists():
         try:
             data = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
-            return {**DEFAULT_CONFIG, **data}
+            config = {**DEFAULT_CONFIG, **data}
+            if not config.get("huggingface_api_key"):
+                config["huggingface_api_key"] = os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_API_KEY") or ""
+            return config
         except Exception:
-            return DEFAULT_CONFIG.copy()
-    return DEFAULT_CONFIG.copy()
+            config = DEFAULT_CONFIG.copy()
+            config["huggingface_api_key"] = os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_API_KEY") or ""
+            return config
+    config = DEFAULT_CONFIG.copy()
+    config["huggingface_api_key"] = os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_API_KEY") or ""
+    return config
 
 
 def save_config(config: dict[str, Any]) -> None:
@@ -70,6 +86,8 @@ def public_config(config: dict[str, Any]) -> dict[str, Any]:
     for key in list(masked):
         if key.endswith("_api_key") and masked[key]:
             masked[key] = "set"
+    if config.get("huggingface_api_key") and not CONFIG_PATH.exists():
+        masked["huggingface_api_key_source"] = "environment"
     return masked
 
 
@@ -241,6 +259,114 @@ def openvsx_extension(namespace: str, extension: str) -> dict[str, Any]:
     return response.json()
 
 
+def remove_tree_force(path: Path) -> None:
+    if not path.exists():
+        return
+    def onexc(function, target, excinfo):
+        try:
+            os.chmod(target, 0o700)
+            function(target)
+        except Exception:
+            raise excinfo
+    shutil.rmtree(path, onexc=onexc)
+
+
+def find_vscode_cli() -> str | None:
+    candidates = [
+        shutil.which("code"),
+        shutil.which("code.cmd"),
+        shutil.which("code-insiders"),
+        shutil.which("code-insiders.cmd"),
+        str(Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "Microsoft VS Code" / "bin" / "code.cmd"),
+        str(Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "Microsoft VS Code Insiders" / "bin" / "code-insiders.cmd"),
+    ]
+    for candidate in candidates:
+        if candidate and Path(candidate).exists():
+            return candidate
+    return None
+
+
+def vscode_host_status() -> dict[str, Any]:
+    cli = find_vscode_cli()
+    if not cli:
+        return {"available": False, "cli": None, "version": None}
+    try:
+        proc = subprocess.run(["cmd", "/c", cli, "--version"], capture_output=True, text=True, timeout=30)
+        version = (proc.stdout or proc.stderr).strip().splitlines()
+    except Exception as exc:
+        version = [f"Version check failed: {exc}"]
+    return {"available": True, "cli": cli, "version": version}
+
+
+def install_vsix_into_vscode(vsix_path: Path) -> dict[str, Any]:
+    cli = find_vscode_cli()
+    if not cli:
+        return {"attempted": False, "installed": False, "reason": "VS Code CLI was not found."}
+    command = f'"{cli}" --install-extension "{vsix_path}" --force'
+    proc = subprocess.run(
+        command,
+        capture_output=True,
+        text=True,
+        timeout=180,
+        shell=True,
+    )
+    return {
+        "attempted": True,
+        "installed": proc.returncode == 0,
+        "returncode": proc.returncode,
+        "stdout": proc.stdout[-4000:],
+        "stderr": proc.stderr[-4000:],
+        "cli": cli,
+    }
+
+
+def install_vscode_extension(
+    namespace: str,
+    extension: str,
+    version: str | None = None,
+    download_url: str | None = None,
+    display_name: str | None = None,
+) -> dict[str, Any]:
+    meta: dict[str, Any] = {}
+    if not download_url:
+        meta = openvsx_extension(namespace, extension)
+        version = version or meta.get("version") or meta.get("latestVersion") or "unknown"
+        files = meta.get("files") or {}
+        download_url = files.get("download") or files.get("downloadUrl") or meta.get("downloadUrl")
+    version = version or "unknown"
+    if not download_url:
+        raise ValueError("No downloadable VSIX URL was found for this extension.")
+    install_dir = VSCODE_PLUGIN_ROOT / f"{namespace}.{extension}@{version}"
+    if install_dir.exists():
+        remove_tree_force(install_dir)
+    install_dir.mkdir(parents=True)
+    vsix_path = install_dir / f"{namespace}.{extension}-{version}.vsix"
+    with requests.get(download_url, stream=True, timeout=120) as response:
+        response.raise_for_status()
+        with vsix_path.open("wb") as handle:
+            for chunk in response.iter_content(chunk_size=1024 * 256):
+                if chunk:
+                    handle.write(chunk)
+    package = extract_package_json(vsix_path, install_dir / "extracted")
+    manifest = {
+        "namespace": namespace,
+        "extension": extension,
+        "display_name": display_name or package.get("displayName") or f"{namespace}.{extension}",
+        "version": version,
+        "download_url": download_url,
+        "vsix": str(vsix_path),
+        "installed_at": time.time(),
+        "package": package,
+        "runtime_note": "Installed into OpenClaw plugin store. VS Code API execution requires a compatible adapter or VS Code host.",
+    }
+    if load_config().get("vscode_host_enabled", True):
+        manifest["vscode_host"] = install_vsix_into_vscode(vsix_path)
+        if manifest["vscode_host"].get("installed"):
+            manifest["runtime_note"] = "Installed into OpenClaw plugin store and installed into the local VS Code extension host."
+    (install_dir / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    return manifest
+
+
 def extract_package_json(vsix_path: Path, destination: Path) -> dict[str, Any]:
     metadata: dict[str, Any] = {}
     with zipfile.ZipFile(vsix_path, "r") as archive:
@@ -252,7 +378,11 @@ def extract_package_json(vsix_path: Path, destination: Path) -> dict[str, Any]:
     return metadata
 
 
-app = Flask(__name__)
+app = Flask(
+    __name__,
+    template_folder=str(ASSET_ROOT / "templates"),
+    static_folder=str(ASSET_ROOT / "static"),
+)
 CORS(app)
 
 
@@ -532,43 +662,23 @@ def vscode_search():
         return safe_json_error(f"OpenVSX search failed: {exc}", 502)
 
 
+@app.get("/api/plugins/vscode/host/status")
+def vscode_host_status_route():
+    return jsonify({"ok": True, "host": vscode_host_status()})
+
+
 @app.post("/api/plugins/vscode/install")
 def vscode_install():
     data = request.get_json(force=True, silent=True) or {}
     namespace = str(data.get("namespace", "")).strip()
     extension = str(data.get("extension", "")).strip()
+    version = str(data.get("version", "")).strip() or None
+    download_url = str(data.get("download_url", "")).strip() or None
+    display_name = str(data.get("display_name", "")).strip() or None
     if not namespace or not extension:
         return safe_json_error("Namespace and extension are required.")
     try:
-        meta = openvsx_extension(namespace, extension)
-        version = meta.get("version") or meta.get("latestVersion") or "unknown"
-        files = meta.get("files") or {}
-        download_url = files.get("download") or files.get("downloadUrl") or meta.get("downloadUrl")
-        if not download_url:
-            return safe_json_error("No downloadable VSIX URL was found for this extension.", 404, metadata=meta)
-        install_dir = VSCODE_PLUGIN_ROOT / f"{namespace}.{extension}@{version}"
-        if install_dir.exists():
-            shutil.rmtree(install_dir)
-        install_dir.mkdir(parents=True)
-        vsix_path = install_dir / f"{namespace}.{extension}-{version}.vsix"
-        with requests.get(download_url, stream=True, timeout=120) as response:
-            response.raise_for_status()
-            with vsix_path.open("wb") as handle:
-                for chunk in response.iter_content(chunk_size=1024 * 256):
-                    if chunk:
-                        handle.write(chunk)
-        package = extract_package_json(vsix_path, install_dir / "extracted")
-        manifest = {
-            "namespace": namespace,
-            "extension": extension,
-            "version": version,
-            "download_url": download_url,
-            "vsix": str(vsix_path),
-            "installed_at": time.time(),
-            "package": package,
-            "runtime_note": "Installed into OpenClaw plugin store. VS Code API execution requires a compatible adapter or VS Code host.",
-        }
-        (install_dir / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+        manifest = install_vscode_extension(namespace, extension, version, download_url, display_name)
         return jsonify({"ok": True, "installed": manifest})
     except Exception as exc:
         return safe_json_error(f"Install failed: {exc}", 502)
@@ -586,4 +696,7 @@ def vscode_installed():
 
 
 if __name__ == "__main__":
-    app.run(host="127.0.0.1", port=int(os.environ.get("OPENCLAW_PORT", "7865")), debug=False)
+    port = int(os.environ.get("OPENCLAW_PORT", "7865"))
+    if getattr(sys, "frozen", False) and os.environ.get("OPENCLAW_NO_BROWSER") != "1":
+        threading.Timer(1.5, lambda: webbrowser.open(f"http://127.0.0.1:{port}")).start()
+    app.run(host="127.0.0.1", port=port, debug=False)

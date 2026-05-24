@@ -260,13 +260,16 @@ function renderPluginSearch(extensions = []) {
     const namespace = ext.namespace || entry.namespace || "";
     const name = ext.name || entry.name || "";
     const display = ext.displayName || `${namespace}.${name}`;
+    const downloadUrl = ext.files?.download || entry.files?.download || "";
+    const version = ext.version || entry.version || "";
     return `<article class="result-item">
       <div class="result-title">
         <strong>${escapeHtml(display)}</strong>
-        <button class="secondary" data-install-plugin="${escapeHtml(namespace)}|${escapeHtml(name)}">Install</button>
+        <button class="secondary" data-install-plugin="${escapeHtml(namespace)}|${escapeHtml(name)}" data-version="${escapeHtml(version)}" data-download-url="${escapeHtml(downloadUrl)}" data-display-name="${escapeHtml(display)}">Install</button>
       </div>
       <p>${escapeHtml(ext.description || entry.description || "")}</p>
-      <div class="tags">${tags([namespace, name, ext.version || entry.version || ""].filter(Boolean), 4)}</div>
+      <div class="tags">${tags([namespace, name, version].filter(Boolean), 4)}</div>
+      <div class="install-status" aria-live="polite"></div>
     </article>`;
   }).join("") || `<div class="result-item">No add-ons found.</div>`;
 }
@@ -284,22 +287,70 @@ async function searchPlugins() {
   }
 }
 
-async function installPlugin(namespace, extension) {
+async function installPlugin(namespace, extension, button) {
+  const card = button?.closest(".result-item");
+  const status = card?.querySelector(".install-status");
+  if (card) {
+    card.classList.remove("installed", "failed");
+    card.classList.add("installing");
+  }
+  if (button) {
+    button.disabled = true;
+    button.textContent = "Installing...";
+  }
+  if (status) status.textContent = `Downloading ${namespace}.${extension}...`;
   $("installedPlugins").innerHTML = `<div class="result-item">Installing ${escapeHtml(namespace)}.${escapeHtml(extension)}...</div>`;
   try {
-    await api("/api/plugins/vscode/install", { method: "POST", body: JSON.stringify({ namespace, extension }) });
+    const data = await api("/api/plugins/vscode/install", {
+      method: "POST",
+      body: JSON.stringify({
+        namespace,
+        extension,
+        version: button?.dataset.version || "",
+        download_url: button?.dataset.downloadUrl || "",
+        display_name: button?.dataset.displayName || "",
+      }),
+    });
+    if (card) {
+      card.classList.remove("installing");
+      card.classList.add("installed");
+    }
+    if (status) status.textContent = `Installed ${data.installed?.display_name || `${namespace}.${extension}`}.`;
+    if (button) button.textContent = "Installed";
     await loadInstalledPlugins();
   } catch (error) {
+    if (card) {
+      card.classList.remove("installing");
+      card.classList.add("failed");
+    }
+    if (button) {
+      button.disabled = false;
+      button.textContent = "Retry";
+    }
+    if (status) status.textContent = error.message;
     $("installedPlugins").innerHTML = `<div class="result-item">Error: ${escapeHtml(error.message)}</div>`;
   }
 }
 
 async function loadInstalledPlugins() {
-  const data = await api("/api/plugins/vscode/installed");
+  const [data, host] = await Promise.all([
+    api("/api/plugins/vscode/installed"),
+    api("/api/plugins/vscode/host/status"),
+  ]);
+  const hostBox = $("vscodeHostStatus");
+  if (hostBox) {
+    if (host.host?.available) {
+      hostBox.className = "host-status ready";
+      hostBox.textContent = `VS Code host ready: ${host.host.version?.[0] || host.host.cli}`;
+    } else {
+      hostBox.className = "host-status missing";
+      hostBox.textContent = "VS Code host CLI not found. Add-ons still install into OpenClaw store.";
+    }
+  }
   $("installedPlugins").innerHTML = (data.installed || []).map((plugin) => `<article class="result-item">
-    <strong>${escapeHtml(plugin.namespace)}.${escapeHtml(plugin.extension)}</strong>
+    <strong>${escapeHtml(plugin.display_name || `${plugin.namespace}.${plugin.extension}`)}</strong>
     <p>${escapeHtml(plugin.runtime_note || "")}</p>
-    <div class="tags">${tags([plugin.version, plugin.package?.publisher, plugin.package?.engines?.vscode].filter(Boolean), 4)}</div>
+    <div class="tags">${tags([plugin.version, plugin.package?.publisher, plugin.package?.engines?.vscode, plugin.vscode_host?.installed ? "VS Code host" : ""].filter(Boolean), 4)}</div>
   </article>`).join("") || `<div class="result-item">No installed add-ons yet.</div>`;
   await loadHealth();
 }
@@ -355,7 +406,7 @@ function bindEvents() {
     const pluginButton = event.target.closest("[data-install-plugin]");
     if (pluginButton) {
       const [namespace, extension] = pluginButton.dataset.installPlugin.split("|");
-      installPlugin(namespace, extension);
+      installPlugin(namespace, extension, pluginButton);
     }
   });
 }
@@ -365,4 +416,5 @@ document.addEventListener("DOMContentLoaded", async () => {
   await Promise.allSettled([loadHealth(), loadSettings(), loadInstalledPlugins(), loadFiles()]);
   addMessage("assistant", "OpenClaw is ready. Pick a Hugging Face model in the Hugging Face tab, save your token in Settings, then use it directly in Chat.");
   if (window.lucide) window.lucide.createIcons();
+  setTimeout(() => $("splash")?.classList.add("hidden"), 650);
 });

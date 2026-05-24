@@ -6,7 +6,13 @@ openclaw_config.json
 package.json
 package-lock.json
 .openclaw-test.pid
+.openclaw-build105-test.pid
+.openclaw-exe-test.pid
 openclaw-ui-*.png
+build/
+dist/
+installer-build/
+*.spec
 generated/*
 workspace/*
 plugins/vscode/*
