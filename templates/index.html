@@ -58,7 +58,12 @@
             <option value="custom">Custom endpoint</option>
           </select>
           <input id="modelInput" placeholder="Model id">
+          <select id="modelSelect" title="Loaded models">
+            <option value="">Load models</option>
+          </select>
+          <button id="loadModelsBtn" class="icon-btn" title="Load provider models"><i data-lucide="refresh-cw"></i></button>
           <button id="saveProviderBtn" class="icon-btn" title="Save provider"><i data-lucide="save"></i></button>
+          <span id="modelLoadStatus" class="model-load-status"></span>
         </div>
       </header>
 
@@ -83,7 +88,10 @@
                 <h3>Hugging Face Model Browser</h3>
                 <p>Browse Hub models, provider-routed chat models, and select one for OpenClaw.</p>
               </div>
-              <button id="loadRouterModelsBtn" class="secondary"><i data-lucide="cloud"></i><span>Live chat models</span></button>
+              <div class="button-row">
+                <button id="loadFreeModelsBtn" class="secondary"><i data-lucide="badge-check"></i><span>Free/open models</span></button>
+                <button id="loadRouterModelsBtn" class="secondary"><i data-lucide="cloud"></i><span>Live chat models</span></button>
+              </div>
             </div>
             <div class="model-search">
               <input id="hfQuery" placeholder="Search models, e.g. llama, qwen, flux, whisper">

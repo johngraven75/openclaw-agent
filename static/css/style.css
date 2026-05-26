@@ -191,9 +191,15 @@ textarea { resize: vertical; line-height: 1.45; }
 .topbar h2 { font-size: 1.7rem; }
 .provider-strip {
   display: grid;
-  grid-template-columns: 155px 220px 42px;
+  grid-template-columns: 145px minmax(170px, 230px) minmax(160px, 240px) 42px 42px;
   gap: 8px;
   align-items: center;
+}
+.model-load-status {
+  grid-column: 1 / -1;
+  color: var(--muted);
+  font-size: .78rem;
+  min-height: 1rem;
 }
 .icon-btn, .primary, .secondary, .ghost {
   display: inline-flex;
@@ -286,6 +292,12 @@ textarea { resize: vertical; line-height: 1.45; }
   justify-content: space-between;
   gap: 16px;
   margin-bottom: 14px;
+}
+.button-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
 }
 .panel h3 { font-size: 1.05rem; }
 .model-search {

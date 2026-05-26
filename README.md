@@ -4,12 +4,13 @@ OpenClaw is a local desktop-friendly multimodal agent workspace with a Flask bac
 
 ## Build
 
-Current version: **Build 1.0.5**
+Current version: **Build 1.0.6**
 
 ## Features
 
 - Conversational agent shell with local reasoning fallback.
 - Hugging Face model browser, router model list, model selection, provider policy selection, and in-app model testing.
+- Provider model loader in the chat header for Hugging Face, Ollama, OpenAI quick models, local mode, and custom endpoints.
 - Hugging Face LLM chat through the current OpenAI-compatible Inference Providers router.
 - Hugging Face image generation adapter for text-to-image models when a token is configured.
 - Provider settings for Hugging Face, OpenAI, Ollama, and OpenAI-compatible custom endpoints.
@@ -45,8 +46,8 @@ http://127.0.0.1:7865
 6. Press `Use` on a model.
 7. Test it in the selected model panel or use Chat.
 
-OpenClaw reports provider errors truthfully. Some Hugging Face models are gated, unavailable for serverless inference, or require billing/provider access.
+OpenClaw reports provider errors truthfully. Some Hugging Face models are gated, unavailable for serverless inference, or require billing/provider access. A token can be saved in Settings or installed as the Windows user environment variable `HF_TOKEN`.
 
 ## Add-on Store
 
-OpenClaw downloads VS Code-compatible extensions from OpenVSX into `plugins/vscode`. Running VS Code extension code requires a compatible adapter or VS Code extension host; Build 1.0.4 prepares the catalog, install, manifest, and storage layer.
+OpenClaw downloads VS Code-compatible extensions from OpenVSX into `plugins/vscode` and installs them into the local VS Code extension host when the VS Code CLI is available.

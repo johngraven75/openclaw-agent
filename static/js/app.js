@@ -75,6 +75,9 @@ async function loadSettings() {
   state.settings = data.settings;
   $("providerSelect").value = state.settings.provider || "local";
   $("modelInput").value = state.settings.model || "openclaw-local";
+  if ($("modelSelect")) {
+    $("modelSelect").innerHTML = `<option value="${escapeHtml(state.settings.model || "")}">${escapeHtml(state.settings.model || "Load models")}</option>`;
+  }
   ["huggingface_api_key", "openai_api_key", "custom_endpoint", "custom_api_key", "ollama_endpoint"].forEach((id) => {
     if ($(id)) $(id).value = state.settings[id] === "set" ? "" : (state.settings[id] || "");
   });
@@ -102,6 +105,49 @@ async function saveSettings(extra = {}) {
   $("providerSelect").value = state.settings.provider || "local";
   $("modelInput").value = state.settings.model || "";
   return data;
+}
+
+async function loadProviderModels() {
+  const provider = $("providerSelect").value;
+  const status = $("modelLoadStatus");
+  const modelSelect = $("modelSelect");
+  if (status) status.textContent = `Loading ${provider} models...`;
+  if (modelSelect) modelSelect.innerHTML = `<option value="">Loading...</option>`;
+  try {
+    const params = new URLSearchParams({ provider });
+    if (provider === "ollama") {
+      params.set("endpoint", $("ollama_endpoint")?.value.trim() || state.settings.ollama_endpoint || "http://localhost:11434");
+    }
+    const data = await api(`/api/models?${params.toString()}`);
+    const models = data.models || [];
+    if (modelSelect) {
+      modelSelect.innerHTML = models.length
+        ? `<option value="">Select model</option>` + models.map((model) => `<option value="${escapeHtml(model.id)}">${escapeHtml(model.name || model.id)}</option>`).join("")
+        : `<option value="">No models found</option>`;
+    }
+    if (status) {
+      status.textContent = data.message || `${models.length} ${provider} model${models.length === 1 ? "" : "s"} loaded.`;
+    }
+  } catch (error) {
+    if (modelSelect) modelSelect.innerHTML = `<option value="">Load failed</option>`;
+    if (status) status.textContent = error.message;
+  }
+}
+
+async function selectProviderModel(modelId) {
+  const provider = $("providerSelect").value;
+  if (!modelId) return;
+  $("modelInput").value = modelId;
+  if (provider === "huggingface") {
+    state.selectedHFModel = modelId;
+    $("selectedModelCard").innerHTML = `<strong>${escapeHtml(modelId)}</strong><p>Selected for Hugging Face chat and tests.</p>`;
+  }
+  const data = await api("/api/models/select", {
+    method: "POST",
+    body: JSON.stringify({ provider, model: modelId }),
+  });
+  state.settings = data.settings;
+  if ($("modelLoadStatus")) $("modelLoadStatus").textContent = `Selected ${provider} model: ${modelId}`;
 }
 
 async function sendChat(event) {
@@ -152,10 +198,10 @@ function renderHFModels(models, router = false) {
     const id = model.id || model.modelId || "";
     const providerTags = router && model.providers
       ? model.providers.slice(0, 5).map((p) => `${p.provider}:${p.status}`)
-      : (model.pipeline_tag ? [model.pipeline_tag] : []).concat(model.tags || []);
+      : (model.pipeline_tag ? [model.pipeline_tag] : []).concat(model.license ? [`license:${model.license}`] : []).concat(model.tags || []);
     const meta = router && model.providers
       ? `${model.providers.length} providers · ${model.architecture?.input_modalities?.join(",") || "text"}`
-      : `${model.downloads || 0} downloads · ${model.likes || 0} likes`;
+      : `${model.downloads || 0} downloads · ${model.likes || 0} likes${model.free_note ? " · free/open catalog" : ""}`;
     return `<article class="result-item">
       <div class="result-title">
         <strong>${escapeHtml(id)}</strong>
@@ -191,6 +237,26 @@ async function loadRouterModels() {
   try {
     const data = await api("/api/huggingface/router-models");
     renderHFModels(data.models || [], true);
+  } catch (error) {
+    $("hfResults").innerHTML = `<div class="result-item">Error: ${escapeHtml(error.message)}</div>`;
+  }
+}
+
+async function loadFreeModels() {
+  $("hfResults").innerHTML = `<div class="result-item">Loading public free/open models...</div>`;
+  try {
+    const data = await api("/api/huggingface/free-models", {
+      method: "POST",
+      body: JSON.stringify({
+        query: $("hfQuery").value.trim(),
+        pipeline: $("hfPipeline").value,
+        limit: 80,
+      }),
+    });
+    renderHFModels(data.models || []);
+    if (data.message) {
+      $("hfResults").insertAdjacentHTML("afterbegin", `<div class="result-item"><strong>Free/open filter</strong><p>${escapeHtml(data.message)}</p></div>`);
+    }
   } catch (error) {
     $("hfResults").innerHTML = `<div class="result-item">Error: ${escapeHtml(error.message)}</div>`;
   }
@@ -389,8 +455,16 @@ function bindEvents() {
   document.querySelectorAll(".nav-item").forEach((btn) => btn.addEventListener("click", () => switchView(btn.dataset.view)));
   $("chatForm").addEventListener("submit", sendChat);
   $("saveProviderBtn").addEventListener("click", () => saveSettings().then(loadSettings));
+  $("loadModelsBtn").addEventListener("click", loadProviderModels);
+  $("modelSelect").addEventListener("change", (event) => selectProviderModel(event.target.value).catch((error) => {
+    if ($("modelLoadStatus")) $("modelLoadStatus").textContent = error.message;
+  }));
+  $("providerSelect").addEventListener("change", () => {
+    if ($("modelLoadStatus")) $("modelLoadStatus").textContent = "";
+  });
   $("saveSettingsBtn").addEventListener("click", () => saveSettings().then(loadSettings));
   $("hfSearchBtn").addEventListener("click", searchHFModels);
+  $("loadFreeModelsBtn").addEventListener("click", loadFreeModels);
   $("loadRouterModelsBtn").addEventListener("click", loadRouterModels);
   $("hfTestBtn").addEventListener("click", testHFModel);
   $("searchBtn").addEventListener("click", doWebSearch);

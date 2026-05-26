@@ -23,8 +23,8 @@ from flask_cors import CORS
 
 
 APP_NAME = "OpenClaw"
-VERSION = "1.0.5"
-BUILD_LABEL = "Build 1.0.5"
+VERSION = "1.0.6"
+BUILD_LABEL = "Build 1.0.6"
 if getattr(sys, "frozen", False):
     ROOT = Path(sys.executable).resolve().parent
     ASSET_ROOT = Path(getattr(sys, "_MEIPASS", ROOT))
@@ -56,6 +56,19 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "reasoning_style": "plan-act-check",
     "vscode_host_enabled": True,
     "workspace": str(WORKSPACE),
+}
+
+OPEN_LICENSE_TAGS = {
+    "license:apache-2.0",
+    "license:mit",
+    "license:bsd-3-clause",
+    "license:bsd-2-clause",
+    "license:cc-by-4.0",
+    "license:cc-by-sa-4.0",
+    "license:cc0-1.0",
+    "license:openrail",
+    "license:bigscience-openrail-m",
+    "license:creativeml-openrail-m",
 }
 
 
@@ -140,15 +153,85 @@ def call_openai_compatible(endpoint: str, api_key: str, model: str, messages: li
 
 def call_ollama(config: dict[str, Any], model: str, messages: list[dict[str, str]]) -> ProviderResult:
     endpoint = config.get("ollama_endpoint") or "http://localhost:11434"
-    response = requests.post(
-        endpoint.rstrip("/") + "/api/chat",
-        json={"model": model or "llama3.1", "messages": messages, "stream": False},
-        timeout=120,
-    )
+    selected_model = model or config.get("model") or ""
+    available = list_ollama_models(endpoint)
+    if available["ok"] and not available["models"]:
+        raise ValueError("Ollama is running, but no local models are installed. Run `ollama pull llama3.1` or install a model from Ollama before selecting Ollama.")
+    if not selected_model or selected_model == "openclaw-local":
+        if available["models"]:
+            selected_model = available["models"][0]["id"]
+        else:
+            selected_model = "llama3.1"
+    payload = {"model": selected_model, "messages": messages, "stream": False}
+    response = requests.post(endpoint.rstrip("/") + "/api/chat", json=payload, timeout=120)
+    if response.status_code == 404:
+        prompt = "\n".join(f"{m.get('role', 'user')}: {m.get('content', '')}" for m in messages)
+        fallback = requests.post(
+            endpoint.rstrip("/") + "/api/generate",
+            json={"model": selected_model, "prompt": prompt, "stream": False},
+            timeout=120,
+        )
+        if fallback.status_code == 404:
+            raise ValueError(f"Ollama model `{selected_model}` was not found or this Ollama server does not expose chat/generate for it. Install it with `ollama pull {selected_model}`.")
+        fallback.raise_for_status()
+        data = fallback.json()
+        text = data.get("response", "")
+        return ProviderResult(text=text or json.dumps(data)[:4000], provider="ollama", model=selected_model, raw=data)
     response.raise_for_status()
     data = response.json()
     text = data.get("message", {}).get("content", "")
-    return ProviderResult(text=text or json.dumps(data)[:4000], provider="ollama", model=model, raw=data)
+    return ProviderResult(text=text or json.dumps(data)[:4000], provider="ollama", model=selected_model, raw=data)
+
+
+def list_ollama_models(endpoint: str) -> dict[str, Any]:
+    try:
+        response = requests.get(endpoint.rstrip("/") + "/api/tags", timeout=8)
+        response.raise_for_status()
+        raw_models = response.json().get("models", [])
+        models = []
+        for item in raw_models:
+            name = item.get("name") or item.get("model") or ""
+            if name:
+                models.append({
+                    "id": name,
+                    "name": name,
+                    "provider": "ollama",
+                    "size": item.get("size"),
+                    "modified_at": item.get("modified_at"),
+                })
+        return {"ok": True, "models": models}
+    except Exception as exc:
+        return {"ok": False, "models": [], "error": str(exc)}
+
+
+def is_public_free_model(model: dict[str, Any]) -> bool:
+    if model.get("private") or model.get("gated"):
+        return False
+    tags = set(str(tag).lower() for tag in model.get("tags", []))
+    if not tags:
+        return True
+    license_tags = {tag for tag in tags if tag.startswith("license:")}
+    return not license_tags or bool(license_tags & OPEN_LICENSE_TAGS)
+
+
+def public_model_card(model: dict[str, Any], source: str = "huggingface") -> dict[str, Any]:
+    tags = [str(tag) for tag in model.get("tags", [])]
+    license_tag = next((tag for tag in tags if tag.lower().startswith("license:")), "")
+    model_id = model.get("id") or model.get("modelId") or ""
+    return {
+        "id": model_id,
+        "name": model_id,
+        "source": source,
+        "provider": "huggingface",
+        "pipeline_tag": model.get("pipeline_tag", ""),
+        "downloads": model.get("downloads", 0),
+        "likes": model.get("likes", 0),
+        "license": license_tag.replace("license:", ""),
+        "tags": tags,
+        "gated": bool(model.get("gated")),
+        "private": bool(model.get("private")),
+        "free_note": "Public non-gated model. License/cost can still vary by inference provider.",
+    }
 
 
 def call_huggingface_text(config: dict[str, Any], model: str, prompt: str) -> ProviderResult:
@@ -425,6 +508,66 @@ def update_settings():
     return jsonify({"ok": True, "settings": public_config(config)})
 
 
+@app.get("/api/models")
+def provider_models():
+    config = load_config()
+    provider = str(request.args.get("provider") or config.get("provider") or "local").strip().lower()
+    try:
+        if provider == "ollama":
+            endpoint = str(request.args.get("endpoint") or config.get("ollama_endpoint") or "http://localhost:11434")
+            result = list_ollama_models(endpoint)
+            message = result.get("error") if not result.get("ok") else ""
+            if result.get("ok") and not result.get("models"):
+                message = "Ollama is reachable, but no models are installed. Run `ollama pull llama3.1`, then reload models."
+            return jsonify({"ok": True, "provider": "ollama", "models": result.get("models", []), "message": message})
+        if provider == "huggingface":
+            headers = {"User-Agent": "OpenClaw/1.0"}
+            token = config.get("huggingface_api_key", "")
+            if token:
+                headers["Authorization"] = f"Bearer {token}"
+            response = requests.get("https://router.huggingface.co/v1/models", headers=headers, timeout=45)
+            response.raise_for_status()
+            models = []
+            for item in response.json().get("data", []):
+                model_id = item.get("id") or item.get("model") or ""
+                if model_id:
+                    models.append({
+                        "id": model_id,
+                        "name": model_id,
+                        "provider": "huggingface",
+                        "modalities": item.get("architecture", {}).get("input_modalities", []),
+                    })
+            return jsonify({"ok": True, "provider": "huggingface", "models": models[:200], "message": ""})
+        if provider == "openai":
+            return jsonify({"ok": True, "provider": "openai", "models": [
+                {"id": "gpt-4.1", "name": "gpt-4.1", "provider": "openai"},
+                {"id": "gpt-4.1-mini", "name": "gpt-4.1-mini", "provider": "openai"},
+                {"id": "gpt-4o", "name": "gpt-4o", "provider": "openai"},
+                {"id": "gpt-4o-mini", "name": "gpt-4o-mini", "provider": "openai"},
+            ], "message": "OpenAI model list is the built-in quick list. You can still type any compatible model id."})
+        if provider == "custom":
+            return jsonify({"ok": True, "provider": "custom", "models": [], "message": "Custom OpenAI-compatible endpoints vary. Type the model id supplied by that endpoint."})
+        return jsonify({"ok": True, "provider": "local", "models": [{"id": "openclaw-local", "name": "openclaw-local", "provider": "local"}], "message": "Local reasoning mode is selected."})
+    except Exception as exc:
+        return safe_json_error(f"Model loading failed for {provider}: {exc}", 502)
+
+
+@app.post("/api/models/select")
+def select_provider_model():
+    data = request.get_json(force=True, silent=True) or {}
+    provider = str(data.get("provider") or "").strip()
+    model = str(data.get("model") or "").strip()
+    if not provider:
+        return safe_json_error("Provider is required.")
+    if not model:
+        return safe_json_error("Model id is required.")
+    config = load_config()
+    config["provider"] = provider
+    config["model"] = model
+    save_config(config)
+    return jsonify({"ok": True, "settings": public_config(config)})
+
+
 @app.post("/api/chat")
 def chat():
     data = request.get_json(force=True, silent=True) or {}
@@ -592,6 +735,29 @@ def huggingface_search():
     response = requests.get("https://huggingface.co/api/models", params=params, timeout=30)
     response.raise_for_status()
     return jsonify({"ok": True, "models": response.json()})
+
+
+@app.post("/api/huggingface/free-models")
+def huggingface_free_models():
+    data = request.get_json(force=True, silent=True) or {}
+    query = str(data.get("query", "")).strip()
+    pipeline = str(data.get("pipeline", "")).strip()
+    sort = str(data.get("sort", "downloads")).strip()
+    limit = max(1, min(int(data.get("limit", 50)), 100))
+    params = {"search": query, "limit": limit, "full": "true", "sort": sort}
+    if pipeline:
+        params["pipeline_tag"] = pipeline
+    try:
+        response = requests.get("https://huggingface.co/api/models", params=params, timeout=30)
+        response.raise_for_status()
+        public_models = [public_model_card(model) for model in response.json() if is_public_free_model(model)]
+        return jsonify({
+            "ok": True,
+            "models": public_models,
+            "message": "Showing public, non-gated Hugging Face models with open or unspecified license tags. Inference provider billing and gated access can still vary by model/provider.",
+        })
+    except Exception as exc:
+        return safe_json_error(f"Free/open model catalog failed: {exc}", 502)
 
 
 @app.get("/api/huggingface/router-models")

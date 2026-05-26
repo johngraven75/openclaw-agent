@@ -4,11 +4,12 @@ import os
 import shutil
 import subprocess
 import sys
+import base64
 from pathlib import Path
 
 
 APP_NAME = "OpenClaw Agent"
-BUILD_LABEL = "Build 1.0.5"
+BUILD_LABEL = "Build 1.0.6"
 
 
 def asset_root() -> Path:
@@ -16,39 +17,25 @@ def asset_root() -> Path:
 
 
 def create_shortcut(target: Path, shortcut: Path) -> None:
-    try:
-        import win32com.client  # type: ignore
+    def ps_quote(value: Path) -> str:
+        return str(value).replace("'", "''")
 
-        shell = win32com.client.Dispatch("WScript.Shell")
-        link = shell.CreateShortcut(str(shortcut))
-        link.TargetPath = str(target)
-        link.WorkingDirectory = str(target.parent)
-        link.IconLocation = str(target)
-        link.Save()
-    except Exception:
-        ps = (
-            "$s=(New-Object -ComObject WScript.Shell).CreateShortcut($args[0]);"
-            "$s.TargetPath=$args[1];"
-            "$s.WorkingDirectory=$args[2];"
-            "$s.IconLocation=$args[1];"
-            "$s.Save()"
-        )
-        subprocess.run(
-            [
-                "powershell",
-                "-NoProfile",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-Command",
-                ps,
-                str(shortcut),
-                str(target),
-                str(target.parent),
-            ],
-            check=False,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
+    ps = (
+        "$ErrorActionPreference='Stop';"
+        "$shell=New-Object -ComObject WScript.Shell;"
+        f"$link=$shell.CreateShortcut('{ps_quote(shortcut)}');"
+        f"$link.TargetPath='{ps_quote(target)}';"
+        f"$link.WorkingDirectory='{ps_quote(target.parent)}';"
+        f"$link.IconLocation='{ps_quote(target)}';"
+        "$link.Save();"
+    )
+    encoded = base64.b64encode(ps.encode("utf-16le")).decode("ascii")
+    subprocess.run(
+        ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-EncodedCommand", encoded],
+        check=False,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
 
 
 def desktop_locations() -> list[Path]:
@@ -78,16 +65,16 @@ def main() -> None:
     install_dir = Path(os.environ["LOCALAPPDATA"]) / "Programs" / APP_NAME
     install_dir.mkdir(parents=True, exist_ok=True)
 
-    for name in ("OpenClaw.exe", "BUILD_NOTES_openclaw_build105.md", "README.md"):
+    for name in ("OpenClaw.exe", "BUILD_NOTES_openclaw_build106.md", "README.md"):
         shutil.copy2(src / name, install_dir / name)
 
     for desktop in desktop_locations():
-        launcher = desktop / "START OpenClaw Build 1.0.5.bat"
+        launcher = desktop / "START OpenClaw Build 1.0.6.bat"
         launcher.write_text(
             '@echo off\nstart "" "%LOCALAPPDATA%\\Programs\\OpenClaw Agent\\OpenClaw.exe"\n',
             encoding="utf-8",
         )
-        create_shortcut(install_dir / "OpenClaw.exe", desktop / "OpenClaw Build 1.0.5.lnk")
+        create_shortcut(install_dir / "OpenClaw.exe", desktop / "OpenClaw Build 1.0.6.lnk")
 
     if "--no-launch" not in sys.argv:
         subprocess.Popen([str(install_dir / "OpenClaw.exe")], cwd=str(install_dir))

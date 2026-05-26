@@ -1,10 +1,10 @@
-# OpenClaw Build 1.0.5 Notes
+# OpenClaw Build 1.0.6 Notes
 
-Date: 2026-05-24
+Date: 2026-05-26
 
 ## Build Summary
 
-Build 1.0.5 creates the Windows installer line for OpenClaw and carries forward the full Build 1.0.4 app surface. It adds the CinaVault Build 129 logo as the first-load splash screen, fixes the visible add-on installation flow, and packages a frozen `OpenClaw.exe` with Windows setup artifacts.
+Build 1.0.6 fixes provider model loading and selection, improves Ollama diagnostics, permanently supports Windows user `HF_TOKEN` loading, and adds a live free/open Hugging Face model catalog. It carries forward the Build 1.0.5 Windows installer line, CinaVault Build 129 splash logo, Copilot-style UI skin, VS Code/OpenVSX add-ons, and VS Code extension host adapter.
 
 ## Carried Forward
 
@@ -16,64 +16,51 @@ Build 1.0.5 creates the Windows installer line for OpenClaw and carries forward 
 - Image generation adapter.
 - Workspace file management.
 - VS Code/OpenVSX add-on catalog and installation store.
-- Build notes and numbered packaging requirement.
+- VS Code extension host adapter.
+- CinaVault Build 129 logo splash screen.
 - Hugging Face model browsing, router-backed model list, in-app model selection, and selected-model testing.
 
 ## New In This Build
 
-- Version bumped to Build 1.0.5.
-- Added the CinaVault Build 129 logo mark as `/static/img/cinavault-build129-logo.png`.
-- Added a first-load splash screen using the Build 129 logo.
-- Fixed the add-on install button UX with visible Installing, Installed, Retry, and inline error states.
-- Fixed add-on installation to use the exact OpenVSX catalog VSIX download URL when available.
-- Added frozen-app asset handling for PyInstaller.
-- Added automatic browser open when running the packaged Windows `OpenClaw.exe`.
-- Built a Windows executable with PyInstaller.
-- Added tracked Windows packaging scripts under `packaging/windows`.
-- Added a local VS Code extension host adapter.
-- Add-on installs now download the VSIX into OpenClaw and install it into the local VS Code host with `code --install-extension`.
-- Added VS Code host status to the Add-ons panel.
-- Added default Hugging Face token loading from local environment variables `HF_TOKEN` or `HUGGINGFACE_API_KEY`.
-- Did not store the pasted `ghp_...` value as a Hugging Face token because it is a GitHub-style token and not a valid Hugging Face token format.
+- Version bumped to Build 1.0.6.
+- Added `/api/models` provider model discovery for local, Hugging Face, OpenAI quick models, Ollama, and custom endpoints.
+- Added `/api/models/select` so model selection persists to the same provider/model fields used by Chat.
+- Added a top-bar model selector with a reload button and clear model-loading status.
+- Added `/api/huggingface/free-models` for live public non-gated Hugging Face model discovery.
+- Added the `Free/open models` button to the Hugging Face browser.
+- Free/open model catalog filters out private and gated models and prefers recognized open license tags when license tags are present.
+- Ollama now checks `/api/tags` before chat, reports when Ollama is running with no installed models, and falls back from `/api/chat` to `/api/generate` when needed.
+- Installed the user's valid Hugging Face token locally in the Windows user environment as `HF_TOKEN` and in the installed app config. The token is not stored in Git, build notes, installer source, or release notes.
 
 ## Verification Completed
 
 - Python syntax check passed with `python -m py_compile app.py`.
-- Build 1.0.5 health endpoint returned version 1.0.5 on a source run.
-- OpenVSX catalog install endpoint installed the Python extension using the searched catalog download URL.
-- PyInstaller completed and produced `dist\OpenClaw.exe`.
-- Frozen `OpenClaw.exe` health endpoint returned Build 1.0.5.
-- Frozen `OpenClaw.exe` served the splash HTML with `/static/img/cinavault-build129-logo.png`.
-- Frozen `OpenClaw.exe` served the Build 129 logo PNG with HTTP 200.
-- Frozen `OpenClaw.exe` installed the Python OpenVSX extension through the updated add-on route.
-- Source run detected VS Code host CLI at `C:\Users\johng\AppData\Local\Programs\Microsoft VS Code\bin\code.CMD`.
-- Source run installed `ms-python.python-2026.4.0.vsix` into VS Code with return code 0.
-- Final Windows setup EXE installed Build 1.0.5 to `%LOCALAPPDATA%\Programs\OpenClaw Agent`.
-- Installed executable hash matched the freshly frozen `dist\OpenClaw.exe`.
-- Installed app health endpoint returned Build 1.0.5 from `%LOCALAPPDATA%\Programs\OpenClaw Agent\workspace`.
-- Installed app VS Code host endpoint detected VS Code 1.121.0.
-- Installed app successfully installed `ms-python.python-2026.4.0.vsix` into VS Code with return code 0.
-- Rebuilt setup creates `START OpenClaw Build 1.0.5.bat` and `OpenClaw Build 1.0.5.lnk` in both detected Desktop locations: `C:\Users\johng\Desktop` and `C:\Users\johng\OneDrive\Documents\Desktop`.
-- Installed app after rebuilt setup returned Build 1.0.5 and detected VS Code host 1.121.0.
-- In-app browser verification loaded `http://127.0.0.1:7865/`, confirmed page title `OpenClaw 1.0.5`, confirmed the splash logo element, and confirmed visible Hugging Face and VS Code host controls.
-- Hugging Face model browsing was verified through the installed app POST route and returned live text-generation model results.
+- Source app on port 7866 returned Build 1.0.6.
+- Source `/api/models?provider=local` returned the local reasoning model.
+- Source `/api/models?provider=ollama` returned the truthful empty-model diagnostic: Ollama is reachable, but no models are installed.
+- Source `/api/huggingface/free-models` returned public non-gated text-generation model results.
+- Source `/api/models/select` persisted Hugging Face provider/model selection.
+- PyInstaller rebuilt frozen `OpenClaw.exe`.
+- Windows setup EXE and portable ZIP were rebuilt as Build 1.0.6.
+- Installed setup EXE returned exit code 0.
+- Installed app returned Build 1.0.6 from `/api/health`.
+- Installed `/api/models?provider=huggingface` returned 54 router models using the installed Hugging Face token.
+- Installed `/api/huggingface/free-models` returned public free/open model results.
+- Installed `/api/models/select` persisted the selected Hugging Face model.
+- Installed `/api/chat` successfully called a Hugging Face router model and returned `OpenClaw HF ready` with no warning.
+- Installed `/api/models?provider=ollama` returned the clear no-installed-models message instead of exposing a raw provider 404.
+- Rebuilt setup creates `START OpenClaw Build 1.0.6.bat` and `OpenClaw Build 1.0.6.lnk` in both detected Desktop locations: `C:\Users\johng\Desktop` and `C:\Users\johng\OneDrive\Documents\Desktop`.
+- In-app browser verification loaded `http://127.0.0.1:7865/`, confirmed page title `OpenClaw 1.0.6`, confirmed the splash logo, confirmed the top-bar model selector, and confirmed the `Free/open models` control.
 
 ## Release Checks
 
-- GitHub repository upload and release asset verification completed for tag `v1.0.5`.
-
-## Artifacts
-
-- Windows setup EXE: `OpenClaw-Build-1.0.5-Windows-Setup.exe`
-  - SHA256: `3325E9B579EB03206DD994FE5315C7A5FCD5FA21D02511E7582B6A7662F38377`
-- Portable Windows ZIP: `OpenClaw-Build-1.0.5-Portable-Windows.zip`
-  - SHA256: `37F29EC83C5D9A96A889C83E4B7B227B6E260D23833B3CE24EA99A6C1A4C69B7`
-- Frozen executable: `OpenClaw.exe`
-  - SHA256: `A1CCAF086D2868E055304720495CB867C462A6F25EDF2C40BCD29DD9772E81A6`
+- Build artifacts were copied to `C:\Users\johng\OneDrive\Documents\Desktop\John\openclaw builds\build-106`.
+- Release artifacts were staged under `releases/build-106`.
+- GitHub repository upload and release asset verification are required for tag `v1.0.6`.
 
 ## Known Truthful Limits
 
-- Hugging Face model execution requires a valid Hugging Face token with Inference Providers permission.
-- Some models are gated, not live, not routed, or require provider billing.
-- Video generation is exposed as a provider-endpoint adapter because Hugging Face/provider video tasks vary by provider and response format.
-- VS Code extensions are downloaded into OpenClaw's plugin store and installed into the local VS Code extension host when VS Code CLI is available.
+- "All known free models" cannot be a permanent static list because model availability, licenses, provider support, and pricing change continuously.
+- Build 1.0.6 implements live public/free/open model discovery instead of hardcoding a stale list.
+- Public Hugging Face model access does not guarantee free hosted inference for every model or provider.
+- Some public models are too large for local execution unless downloaded into a suitable runtime such as Ollama, llama.cpp, Transformers, or a provider endpoint.
