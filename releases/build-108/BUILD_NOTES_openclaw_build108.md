@@ -40,4 +40,4 @@ Build 1.0.8 fixes all open GitHub Dependabot alerts reported for `requirements.t
 - Installed app served the OpenClaw Founders Edition logo with HTTP 200.
 - Installed Hugging Face chat recovery returned a routed Hugging Face response with no local fallback warning.
 - Rebuilt setup creates `START OpenClaw Build 1.0.8.bat` and `OpenClaw Build 1.0.8.lnk` in both detected Desktop locations: `C:\Users\johng\Desktop` and `C:\Users\johng\OneDrive\Documents\Desktop`.
-- Dependabot alert closure is verified after the GitHub push because alerts are evaluated from the default branch.
+- GitHub Dependabot API recheck after the default-branch push returned 0 open alerts.
