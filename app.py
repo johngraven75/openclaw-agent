@@ -23,8 +23,8 @@ from flask_cors import CORS
 
 
 APP_NAME = "OpenClaw"
-VERSION = "1.0.6"
-BUILD_LABEL = "Build 1.0.6"
+VERSION = "1.0.7"
+BUILD_LABEL = "Build 1.0.7"
 if getattr(sys, "frozen", False):
     ROOT = Path(sys.executable).resolve().parent
     ASSET_ROOT = Path(getattr(sys, "_MEIPASS", ROOT))
@@ -238,28 +238,49 @@ def call_huggingface_text(config: dict[str, Any], model: str, prompt: str) -> Pr
     token = config.get("huggingface_api_key", "")
     if not token:
         raise ValueError("Hugging Face API key is not configured.")
-    model_id = model or "openai/gpt-oss-120b"
+    selected_model = model or "deepseek-ai/DeepSeek-V4-Pro"
     policy = config.get("huggingface_provider_policy", "fastest")
-    if ":" not in model_id and policy in {"fastest", "cheapest", "preferred"}:
-        model_id = f"{model_id}:{policy}"
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-    response = requests.post(
-        "https://router.huggingface.co/v1/chat/completions",
-        headers=headers,
-        json={
-            "model": model_id,
-            "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0.4,
-            "stream": False,
-        },
-        timeout=120,
+    base_model = selected_model.split(":", 1)[0]
+    candidates: list[str] = []
+    if ":" in selected_model:
+        candidates.append(selected_model)
+    elif policy in {"fastest", "cheapest", "preferred"}:
+        candidates.append(f"{selected_model}:{policy}")
+    candidates.extend([base_model, f"{base_model}:cheapest", "deepseek-ai/DeepSeek-V4-Pro:cheapest"])
+
+    last_error = ""
+    for model_id in dict.fromkeys(candidates):
+        response = requests.post(
+            "https://router.huggingface.co/v1/chat/completions",
+            headers=headers,
+            json={
+                "model": model_id,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.4,
+                "stream": False,
+            },
+            timeout=120,
+        )
+        if response.ok:
+            data = response.json()
+            text = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+            if not text:
+                text = json.dumps(data)[:4000]
+            if model_id != candidates[0]:
+                text = f"{text}\n\nNote: the selected Hugging Face model `{selected_model}` was not accepted by the chat router, so OpenClaw used `{model_id}` for this reply."
+            return ProviderResult(text=text, provider="huggingface", model=model_id, raw=data)
+        try:
+            detail = response.json()
+        except Exception:
+            detail = response.text[:700]
+        last_error = f"{response.status_code} {response.reason}: {detail}"
+
+    raise ValueError(
+        "Hugging Face chat router rejected the selected model. "
+        "Use Live chat models for chat, or use Free/open models for browsing public models that may need a different runtime. "
+        f"Last router error: {last_error}"
     )
-    response.raise_for_status()
-    data = response.json()
-    text = data.get("choices", [{}])[0].get("message", {}).get("content", "")
-    if not text:
-        text = json.dumps(data)[:4000]
-    return ProviderResult(text=text, provider="huggingface", model=model_id, raw=data)
 
 
 def run_agent(config: dict[str, Any], prompt: str, messages: list[dict[str, str]]) -> ProviderResult:

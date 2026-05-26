@@ -4,7 +4,7 @@ OpenClaw is a local desktop-friendly multimodal agent workspace with a Flask bac
 
 ## Build
 
-Current version: **Build 1.0.6**
+Current version: **Build 1.0.7**
 
 ## Features
 
@@ -17,7 +17,7 @@ Current version: **Build 1.0.6**
 - Web search via DuckDuckGo HTML search.
 - Code runner for Python, JavaScript, and PowerShell inside the configured workspace.
 - VS Code-compatible add-on catalog using OpenVSX search and VSIX download into an OpenClaw plugin store.
-- Build 129 CinaVault logo splash screen on first load.
+- OpenClaw Founders Edition logo splash screen and Windows program icon.
 - Workspace file browser and generated media browser.
 - Browser voice input where the browser supports SpeechRecognition.
 
