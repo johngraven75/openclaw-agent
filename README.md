@@ -4,7 +4,7 @@ OpenClaw is a local desktop-friendly multimodal agent workspace with a Flask bac
 
 ## Build
 
-Current version: **Build 1.0.7**
+Current version: **Build 1.0.8**
 
 ## Features
 

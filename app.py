@@ -23,8 +23,8 @@ from flask_cors import CORS
 
 
 APP_NAME = "OpenClaw"
-VERSION = "1.0.7"
-BUILD_LABEL = "Build 1.0.7"
+VERSION = "1.0.8"
+BUILD_LABEL = "Build 1.0.8"
 if getattr(sys, "frozen", False):
     ROOT = Path(sys.executable).resolve().parent
     ASSET_ROOT = Path(getattr(sys, "_MEIPASS", ROOT))

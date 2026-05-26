@@ -9,7 +9,7 @@ from pathlib import Path
 
 
 APP_NAME = "OpenClaw Agent"
-BUILD_LABEL = "Build 1.0.7"
+BUILD_LABEL = "Build 1.0.8"
 
 
 def asset_root() -> Path:
@@ -65,16 +65,16 @@ def main() -> None:
     install_dir = Path(os.environ["LOCALAPPDATA"]) / "Programs" / APP_NAME
     install_dir.mkdir(parents=True, exist_ok=True)
 
-    for name in ("OpenClaw.exe", "BUILD_NOTES_openclaw_build107.md", "README.md"):
+    for name in ("OpenClaw.exe", "BUILD_NOTES_openclaw_build108.md", "README.md"):
         shutil.copy2(src / name, install_dir / name)
 
     for desktop in desktop_locations():
-        launcher = desktop / "START OpenClaw Build 1.0.7.bat"
+        launcher = desktop / "START OpenClaw Build 1.0.8.bat"
         launcher.write_text(
             '@echo off\nstart "" "%LOCALAPPDATA%\\Programs\\OpenClaw Agent\\OpenClaw.exe"\n',
             encoding="utf-8",
         )
-        create_shortcut(install_dir / "OpenClaw.exe", desktop / "OpenClaw Build 1.0.7.lnk")
+        create_shortcut(install_dir / "OpenClaw.exe", desktop / "OpenClaw Build 1.0.8.lnk")
 
     if "--no-launch" not in sys.argv:
         subprocess.Popen([str(install_dir / "OpenClaw.exe")], cwd=str(install_dir))
