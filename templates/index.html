@@ -69,14 +69,38 @@
 
       <section class="view active" id="view-chat">
         <div class="chat-layout">
-          <section class="conversation" id="conversation" aria-live="polite"></section>
-          <form class="composer" id="chatForm">
-            <textarea id="promptInput" rows="4" placeholder="Ask OpenClaw to reason, write code, browse, test, create media, or manage plugins."></textarea>
-            <div class="composer-actions">
-              <button type="button" id="voiceBtn" class="ghost"><i data-lucide="mic"></i><span>Speak</span></button>
-              <button type="submit" class="primary"><i data-lucide="send"></i><span>Send</span></button>
+          <div class="chat-main">
+            <section class="conversation" id="conversation" aria-live="polite"></section>
+            <form class="composer" id="chatForm">
+              <textarea id="promptInput" rows="4" placeholder="Ask OpenClaw to reason, write code, browse, test, create media, or manage plugins."></textarea>
+              <div class="composer-actions">
+                <button type="button" id="voiceBtn" class="ghost"><i data-lucide="mic"></i><span>Speak</span></button>
+                <button type="submit" class="primary"><i data-lucide="send"></i><span>Send</span></button>
+              </div>
+            </form>
+          </div>
+          <aside class="task-deck" aria-label="Chat task deck">
+            <div class="deck-head">
+              <h3>Task Deck</h3>
+              <p>Run common workspace actions from Chat.</p>
             </div>
-          </form>
+            <div class="credential-pill" id="chatCredentialState">Checking credentials</div>
+            <div class="task-block">
+              <label class="field"><span>Web search</span><input id="chatSearchQuery" placeholder="Search the web"></label>
+              <button id="chatSearchBtn" class="secondary wide"><i data-lucide="search"></i><span>Search from chat</span></button>
+            </div>
+            <div class="task-block">
+              <label class="field"><span>Run code</span><select id="chatCodeLanguage"><option value="python">Python</option><option value="javascript">JavaScript</option><option value="powershell">PowerShell</option></select></label>
+              <textarea id="chatCodeInput" rows="5">print("OpenClaw chat task deck ready")</textarea>
+              <button id="chatRunCodeBtn" class="secondary wide"><i data-lucide="play"></i><span>Run from chat</span></button>
+            </div>
+            <div class="task-block two-actions">
+              <button id="chatImageBtn" class="ghost wide"><i data-lucide="image"></i><span>Create image</span></button>
+              <button id="chatPluginsBtn" class="ghost wide"><i data-lucide="blocks"></i><span>Find add-ons</span></button>
+              <button id="chatFilesBtn" class="ghost wide"><i data-lucide="folder-code"></i><span>List files</span></button>
+              <button id="chatSettingsBtn" class="ghost wide"><i data-lucide="settings"></i><span>Credentials</span></button>
+            </div>
+          </aside>
         </div>
       </section>
 
@@ -238,6 +262,10 @@
                 <h3>Provider Keys</h3>
                 <p>Stored locally in openclaw_config.json.</p>
               </div>
+            </div>
+            <div class="credential-card" id="credentialStateCard">
+              <strong>Checking Hugging Face credentials</strong>
+              <span>Provider state will appear after settings load.</span>
             </div>
             <label class="field"><span>Hugging Face token</span><input id="huggingface_api_key" type="password" placeholder="hf_..."></label>
             <label class="field"><span>OpenAI key</span><input id="openai_api_key" type="password" placeholder="sk-..."></label>

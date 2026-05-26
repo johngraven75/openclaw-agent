@@ -59,6 +59,36 @@ function addMessage(role, content, meta = "") {
   $("conversation").scrollTop = $("conversation").scrollHeight;
 }
 
+function renderSelectedHFModel(modelId, active) {
+  const card = $("selectedModelCard");
+  if (!card) return;
+  if (!modelId) {
+    card.innerHTML = `<span>No Hugging Face model selected yet.</span>`;
+    return;
+  }
+  const stateText = active ? "Active for Hugging Face chat." : "Dormant until a verified Hugging Face token is available.";
+  card.innerHTML = `<strong>${escapeHtml(modelId)}</strong><p>${escapeHtml(stateText)}</p>`;
+}
+
+function renderCredentialState(settings) {
+  const stateName = settings.huggingface_credential_state || "missing";
+  const active = Boolean(settings.huggingface_active);
+  const dormant = settings.dormant_huggingface_model || "none";
+  const message = settings.huggingface_credential_message || "Hugging Face credential state is not available.";
+  const title = active ? "Hugging Face verified" : `Hugging Face ${stateName}`;
+  const body = `${message} Dormant model: ${dormant}.`;
+  const card = $("credentialStateCard");
+  if (card) {
+    card.className = `credential-card ${active ? "ready" : "dormant"}`;
+    card.innerHTML = `<strong>${escapeHtml(title)}</strong><span>${escapeHtml(body)}</span>`;
+  }
+  const pill = $("chatCredentialState");
+  if (pill) {
+    pill.className = `credential-pill ${active ? "ready" : "dormant"}`;
+    pill.textContent = active ? `HF verified: ${settings.model || dormant}` : `Local active. HF ${stateName}; dormant: ${dormant}`;
+  }
+}
+
 async function loadHealth() {
   try {
     const health = await api("/api/health");
@@ -81,9 +111,10 @@ async function loadSettings() {
   ["huggingface_api_key", "openai_api_key", "custom_endpoint", "custom_api_key", "ollama_endpoint"].forEach((id) => {
     if ($(id)) $(id).value = state.settings[id] === "set" ? "" : (state.settings[id] || "");
   });
-  if (state.settings.model && state.settings.provider === "huggingface") {
-    selectHFModel(state.settings.model, false);
-  }
+  const dormantModel = state.settings.dormant_huggingface_model || "";
+  state.selectedHFModel = state.settings.provider === "huggingface" ? state.settings.model : dormantModel;
+  renderSelectedHFModel(state.selectedHFModel, Boolean(state.settings.huggingface_active));
+  renderCredentialState(state.settings);
 }
 
 async function saveSettings(extra = {}) {
@@ -140,7 +171,7 @@ async function selectProviderModel(modelId) {
   $("modelInput").value = modelId;
   if (provider === "huggingface") {
     state.selectedHFModel = modelId;
-    $("selectedModelCard").innerHTML = `<strong>${escapeHtml(modelId)}</strong><p>Selected for Hugging Face chat and tests.</p>`;
+    renderSelectedHFModel(modelId, false);
   }
   const data = await api("/api/models/select", {
     method: "POST",
@@ -177,7 +208,7 @@ async function sendChat(event) {
 
 function selectHFModel(modelId, persist = true) {
   state.selectedHFModel = modelId;
-  $("selectedModelCard").innerHTML = `<strong>${escapeHtml(modelId)}</strong><p>Selected for Hugging Face chat and tests.</p>`;
+  renderSelectedHFModel(modelId, Boolean(state.settings.huggingface_active));
   $("providerSelect").value = "huggingface";
   $("modelInput").value = modelId;
   if (persist) {
@@ -185,6 +216,92 @@ function selectHFModel(modelId, persist = true) {
       method: "POST",
       body: JSON.stringify({ model: modelId, provider_policy: $("hfPolicy").value }),
     }).then(loadSettings).catch((error) => setOutput("hfTestOutput", error.message));
+  }
+}
+
+function appendTaskResult(title, body) {
+  addMessage("assistant", `${title}\n\n${body}`);
+}
+
+async function runChatSearch() {
+  const query = $("chatSearchQuery")?.value.trim();
+  if (!query) {
+    appendTaskResult("Web search", "Enter a search query first.");
+    return;
+  }
+  appendTaskResult("Web search", `Searching for: ${query}`);
+  try {
+    const data = await api("/api/search", { method: "POST", body: JSON.stringify({ query, limit: 5 }) });
+    const text = (data.results || []).map((item, index) => `${index + 1}. ${item.title}\n${item.url}\n${item.snippet || ""}`).join("\n\n") || "No results returned.";
+    appendTaskResult("Web search results", text);
+  } catch (error) {
+    appendTaskResult("Web search failed", error.message);
+  }
+}
+
+async function runChatCode() {
+  const language = $("chatCodeLanguage")?.value || "python";
+  const code = $("chatCodeInput")?.value || "";
+  if (!code.trim()) {
+    appendTaskResult("Code runner", "Enter code first.");
+    return;
+  }
+  appendTaskResult("Code runner", `Running ${language} from Chat...`);
+  try {
+    const data = await api("/api/code/run", {
+      method: "POST",
+      body: JSON.stringify({ language, code }),
+    });
+    appendTaskResult("Code runner output", `Exit ${data.returncode}\n\nSTDOUT\n${data.stdout}\n\nSTDERR\n${data.stderr}\n\nFile\n${data.file}`);
+  } catch (error) {
+    appendTaskResult("Code runner failed", error.message);
+  }
+}
+
+async function runChatImage() {
+  const prompt = $("promptInput")?.value.trim() || $("imagePrompt")?.value.trim();
+  if (!prompt) {
+    appendTaskResult("Image generation", "Type an image prompt in the chat composer first.");
+    return;
+  }
+  appendTaskResult("Image generation", "Sending the current chat prompt to the image provider...");
+  try {
+    const data = await api("/api/image", { method: "POST", body: JSON.stringify({ prompt }) });
+    appendTaskResult("Image generated", data.url);
+  } catch (error) {
+    appendTaskResult("Image generation failed", error.message);
+  }
+}
+
+async function runChatPlugins() {
+  const query = $("promptInput")?.value.trim() || "python";
+  appendTaskResult("Add-on search", `Searching OpenVSX for: ${query}`);
+  try {
+    const data = await api("/api/plugins/vscode/search", {
+      method: "POST",
+      body: JSON.stringify({ query, size: 5 }),
+    });
+    const extensions = data.catalog?.extensions || data.catalog?.results || [];
+    const text = extensions.map((entry, index) => {
+      const ext = entry.namespace ? entry : entry.extension || {};
+      const namespace = ext.namespace || entry.namespace || "";
+      const name = ext.name || entry.name || "";
+      const display = ext.displayName || `${namespace}.${name}`;
+      return `${index + 1}. ${display}\n${ext.description || entry.description || ""}`;
+    }).join("\n\n") || "No add-ons found.";
+    appendTaskResult("Add-on results", text);
+  } catch (error) {
+    appendTaskResult("Add-on search failed", error.message);
+  }
+}
+
+async function runChatFiles() {
+  try {
+    const data = await api("/api/files");
+    const text = [`Workspace: ${data.workspace}`].concat((data.files || []).slice(0, 12).map((file) => `${file.path} (${file.size} bytes)`)).join("\n");
+    appendTaskResult("Workspace files", text);
+  } catch (error) {
+    appendTaskResult("Workspace files failed", error.message);
   }
 }
 
@@ -454,6 +571,12 @@ function startVoiceInput() {
 function bindEvents() {
   document.querySelectorAll(".nav-item").forEach((btn) => btn.addEventListener("click", () => switchView(btn.dataset.view)));
   $("chatForm").addEventListener("submit", sendChat);
+  $("chatSearchBtn")?.addEventListener("click", runChatSearch);
+  $("chatRunCodeBtn")?.addEventListener("click", runChatCode);
+  $("chatImageBtn")?.addEventListener("click", runChatImage);
+  $("chatPluginsBtn")?.addEventListener("click", runChatPlugins);
+  $("chatFilesBtn")?.addEventListener("click", runChatFiles);
+  $("chatSettingsBtn")?.addEventListener("click", () => switchView("settings"));
   $("saveProviderBtn").addEventListener("click", () => saveSettings().then(loadSettings));
   $("loadModelsBtn").addEventListener("click", loadProviderModels);
   $("modelSelect").addEventListener("change", (event) => selectProviderModel(event.target.value).catch((error) => {
@@ -488,7 +611,7 @@ function bindEvents() {
 document.addEventListener("DOMContentLoaded", async () => {
   bindEvents();
   await Promise.allSettled([loadHealth(), loadSettings(), loadInstalledPlugins(), loadFiles()]);
-  addMessage("assistant", "OpenClaw is ready. Pick a Hugging Face model in the Hugging Face tab, save your token in Settings, then use it directly in Chat.");
+  addMessage("assistant", "OpenClaw is ready. Chat starts in local reasoning unless a verified provider credential is available; use the Task Deck here for web search, code, media, add-ons, files, and credentials.");
   if (window.lucide) window.lucide.createIcons();
   setTimeout(() => $("splash")?.classList.add("hidden"), 650);
 });

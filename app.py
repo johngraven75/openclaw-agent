@@ -23,8 +23,8 @@ from flask_cors import CORS
 
 
 APP_NAME = "OpenClaw"
-VERSION = "1.0.8"
-BUILD_LABEL = "Build 1.0.8"
+VERSION = "1.0.9"
+BUILD_LABEL = "Build 1.0.9"
 if getattr(sys, "frozen", False):
     ROOT = Path(sys.executable).resolve().parent
     ASSET_ROOT = Path(getattr(sys, "_MEIPASS", ROOT))
@@ -49,6 +49,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "gemini_api_key": "",
     "huggingface_api_key": "",
     "huggingface_provider_policy": "fastest",
+    "dormant_huggingface_model": "",
     "stability_api_key": "",
     "custom_endpoint": "",
     "custom_api_key": "",
@@ -57,6 +58,98 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "vscode_host_enabled": True,
     "workspace": str(WORKSPACE),
 }
+
+HF_TOKEN_CACHE: dict[str, dict[str, Any]] = {}
+HF_TOKEN_CACHE_SECONDS = 300
+
+
+def env_huggingface_token() -> str:
+    return os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_API_KEY") or ""
+
+
+def huggingface_credential_status(token: str) -> dict[str, Any]:
+    token = (token or "").strip()
+    if not token:
+        return {
+            "state": "missing",
+            "active": False,
+            "message": "No Hugging Face token is configured. Hugging Face models stay dormant and Chat uses local reasoning.",
+        }
+    if not token.startswith("hf_"):
+        return {
+            "state": "invalid-format",
+            "active": False,
+            "message": "The configured Hugging Face token does not look like an hf_ token.",
+        }
+
+    cached = HF_TOKEN_CACHE.get(token)
+    now = time.time()
+    if cached and now - float(cached.get("checked_at", 0)) < HF_TOKEN_CACHE_SECONDS:
+        return dict(cached["status"])
+
+    status: dict[str, Any]
+    try:
+        response = requests.get(
+            "https://huggingface.co/api/whoami-v2",
+            headers={"Authorization": f"Bearer {token}", "User-Agent": "OpenClaw/1.0"},
+            timeout=8,
+        )
+        if response.ok:
+            status = {
+                "state": "verified",
+                "active": True,
+                "message": "Hugging Face token verified. Hugging Face chat can be activated.",
+            }
+        elif response.status_code in {401, 403}:
+            status = {
+                "state": "rejected",
+                "active": False,
+                "message": "Hugging Face rejected the configured token. Hugging Face models stay dormant.",
+            }
+        else:
+            status = {
+                "state": "unverified",
+                "active": False,
+                "message": f"Hugging Face token could not be verified right now ({response.status_code}). Chat will stay local until verification succeeds.",
+            }
+    except Exception as exc:
+        status = {
+            "state": "unverified",
+            "active": False,
+            "message": f"Hugging Face token verification failed: {exc}. Chat will stay local until verification succeeds.",
+        }
+
+    HF_TOKEN_CACHE[token] = {"checked_at": now, "status": status}
+    return dict(status)
+
+
+def resolve_provider_state(config: dict[str, Any], provider: str | None = None, model: str | None = None) -> dict[str, Any]:
+    resolved = {**DEFAULT_CONFIG, **config}
+    if not resolved.get("huggingface_api_key"):
+        resolved["huggingface_api_key"] = env_huggingface_token()
+
+    requested_provider = (provider or resolved.get("provider") or "local").strip().lower()
+    requested_model = (model or resolved.get("model") or "").strip()
+    hf_status = huggingface_credential_status(resolved.get("huggingface_api_key", ""))
+    dormant_model = (resolved.get("dormant_huggingface_model") or "").strip()
+
+    if requested_provider == "huggingface":
+        dormant_model = requested_model or dormant_model
+        if not hf_status["active"]:
+            resolved["provider"] = "local"
+            resolved["model"] = "openclaw-local"
+        else:
+            resolved["provider"] = "huggingface"
+            resolved["model"] = requested_model or dormant_model or "deepseek-ai/DeepSeek-V4-Pro"
+    else:
+        resolved["provider"] = requested_provider or "local"
+        resolved["model"] = requested_model or resolved.get("model") or "openclaw-local"
+
+    resolved["dormant_huggingface_model"] = dormant_model
+    resolved["huggingface_credential_state"] = hf_status["state"]
+    resolved["huggingface_credential_message"] = hf_status["message"]
+    resolved["huggingface_active"] = bool(hf_status["active"] and resolved.get("provider") == "huggingface")
+    return resolved
 
 OPEN_LICENSE_TAGS = {
     "license:apache-2.0",
@@ -78,24 +171,24 @@ def load_config() -> dict[str, Any]:
             data = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
             config = {**DEFAULT_CONFIG, **data}
             if not config.get("huggingface_api_key"):
-                config["huggingface_api_key"] = os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_API_KEY") or ""
-            return config
+                config["huggingface_api_key"] = env_huggingface_token()
+            return resolve_provider_state(config)
         except Exception:
             config = DEFAULT_CONFIG.copy()
-            config["huggingface_api_key"] = os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_API_KEY") or ""
-            return config
+            config["huggingface_api_key"] = env_huggingface_token()
+            return resolve_provider_state(config)
     config = DEFAULT_CONFIG.copy()
-    config["huggingface_api_key"] = os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_API_KEY") or ""
-    return config
+    config["huggingface_api_key"] = env_huggingface_token()
+    return resolve_provider_state(config)
 
 
 def save_config(config: dict[str, Any]) -> None:
-    clean = {**DEFAULT_CONFIG, **config}
+    clean = resolve_provider_state({**DEFAULT_CONFIG, **config})
     CONFIG_PATH.write_text(json.dumps(clean, indent=2), encoding="utf-8")
 
 
 def public_config(config: dict[str, Any]) -> dict[str, Any]:
-    masked = dict(config)
+    masked = resolve_provider_state(config)
     for key in list(masked):
         if key.endswith("_api_key") and masked[key]:
             masked[key] = "set"
@@ -115,6 +208,20 @@ class ProviderResult:
     provider: str
     model: str
     raw: Any = None
+
+
+class HuggingFaceCredentialError(ValueError):
+    pass
+
+
+def mark_huggingface_token_inactive(token: str, state: str, message: str) -> None:
+    token = (token or "").strip()
+    if not token:
+        return
+    HF_TOKEN_CACHE[token] = {
+        "checked_at": time.time(),
+        "status": {"state": state, "active": False, "message": message},
+    }
 
 
 def local_reasoning_reply(prompt: str, messages: list[dict[str, str]] | None = None) -> ProviderResult:
@@ -275,6 +382,15 @@ def call_huggingface_text(config: dict[str, Any], model: str, prompt: str) -> Pr
         except Exception:
             detail = response.text[:700]
         last_error = f"{response.status_code} {response.reason}: {detail}"
+        if response.status_code in {401, 402, 403}:
+            state = "quota" if response.status_code == 402 else "rejected"
+            message = (
+                "Hugging Face accepted the token but inference credits or provider access are not available."
+                if response.status_code == 402
+                else "Hugging Face rejected the configured token for this provider request."
+            )
+            mark_huggingface_token_inactive(token, state, message)
+            raise HuggingFaceCredentialError(f"{message} Last router error: {last_error}")
 
     raise ValueError(
         "Hugging Face chat router rejected the selected model. "
@@ -284,8 +400,14 @@ def call_huggingface_text(config: dict[str, Any], model: str, prompt: str) -> Pr
 
 
 def run_agent(config: dict[str, Any], prompt: str, messages: list[dict[str, str]]) -> ProviderResult:
-    provider = (request.json or {}).get("provider") or config.get("provider", "local")
-    model = (request.json or {}).get("model") or config.get("model", "openclaw-local")
+    incoming = request.json or {}
+    runtime = resolve_provider_state(
+        config,
+        provider=str(incoming.get("provider") or config.get("provider", "local")),
+        model=str(incoming.get("model") or config.get("model", "openclaw-local")),
+    )
+    provider = runtime.get("provider", "local")
+    model = runtime.get("model", "openclaw-local")
     system = {
         "role": "system",
         "content": (
@@ -599,6 +721,15 @@ def chat():
     try:
         result = run_agent(load_config(), prompt, messages)
         return jsonify({"ok": True, "reply": result.text, "provider": result.provider, "model": result.model})
+    except HuggingFaceCredentialError as exc:
+        fallback = local_reasoning_reply(prompt, messages)
+        return jsonify({
+            "ok": True,
+            "reply": fallback.text + f"\n\nHugging Face is dormant: {exc}",
+            "provider": fallback.provider,
+            "model": fallback.model,
+            "warning": str(exc),
+        })
     except Exception as exc:
         fallback = local_reasoning_reply(prompt, messages)
         return jsonify({
