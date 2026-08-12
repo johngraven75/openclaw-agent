@@ -52,11 +52,16 @@ function switchView(view) {
 
 function addMessage(role, content, meta = "") {
   state.messages.push({ role, content });
+  return renderMessage(role, content, meta);
+}
+
+function renderMessage(role, content, meta = "") {
   const node = document.createElement("article");
   node.className = `message ${role === "user" ? "user" : "assistant"}`;
   node.innerHTML = `${escapeHtml(content)}${meta ? `<small>${escapeHtml(meta)}</small>` : ""}`;
   $("conversation").appendChild(node);
   $("conversation").scrollTop = $("conversation").scrollHeight;
+  return node;
 }
 
 function renderSelectedHFModel(modelId, active) {
@@ -185,16 +190,16 @@ async function sendChat(event) {
   event.preventDefault();
   const prompt = $("promptInput").value.trim();
   if (!prompt) return;
+  const history = state.messages.slice(-12);
   $("promptInput").value = "";
   addMessage("user", prompt);
-  addMessage("assistant", "Thinking...");
-  const pending = $("conversation").lastElementChild;
+  const pending = renderMessage("assistant", "Thinking...");
   try {
     const data = await api("/api/chat", {
       method: "POST",
       body: JSON.stringify({
         prompt,
-        messages: state.messages.slice(-12),
+        messages: history,
         provider: $("providerSelect").value,
         model: $("modelInput").value.trim(),
       }),

@@ -3,6 +3,8 @@ from __future__ import annotations
 import base64
 import json
 import os
+import re
+import stat
 import shutil
 import subprocess
 import sys
@@ -11,7 +13,7 @@ import time
 import uuid
 import webbrowser
 import zipfile
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -19,7 +21,6 @@ from typing import Any
 import requests
 from bs4 import BeautifulSoup
 from flask import Flask, jsonify, render_template, request, send_from_directory
-from flask_cors import CORS
 
 
 APP_NAME = "OpenClaw"
@@ -61,6 +62,11 @@ DEFAULT_CONFIG: dict[str, Any] = {
 
 HF_TOKEN_CACHE: dict[str, dict[str, Any]] = {}
 HF_TOKEN_CACHE_SECONDS = 300
+MUTATING_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+OPENVSX_ALLOWED_HOSTS = frozenset({"open-vsx.org"})
+MAX_VSIX_FILES = 20_000
+MAX_VSIX_DOWNLOAD_BYTES = 256 * 1024 * 1024
+MAX_VSIX_UNCOMPRESSED_BYTES = 512 * 1024 * 1024
 
 
 def env_huggingface_token() -> str:
@@ -485,6 +491,34 @@ def openvsx_extension(namespace: str, extension: str) -> dict[str, Any]:
     return response.json()
 
 
+def validated_openvsx_download_url(download_url: str) -> str:
+    """Accept only OpenVSX-owned HTTPS artifact URLs.
+
+    The catalog button submits a URL back to the local service. Treat it as
+    untrusted input so a malicious page cannot turn the desktop app into an
+    SSRF client or make it install an arbitrary archive.
+    """
+    parsed = urlsplit(download_url)
+    hostname = (parsed.hostname or "").rstrip(".").lower()
+    if (
+        parsed.scheme.lower() != "https"
+        or hostname not in OPENVSX_ALLOWED_HOSTS
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.port not in {None, 443}
+        or not parsed.path.startswith("/")
+    ):
+        raise ValueError("VSIX downloads must use an approved OpenVSX HTTPS URL.")
+    return download_url
+
+
+def validated_plugin_component(value: str, label: str) -> str:
+    normalized = (value or "").strip()
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", normalized):
+        raise ValueError(f"{label} contains unsupported characters.")
+    return normalized
+
+
 def remove_tree_force(path: Path) -> None:
     if not path.exists():
         return
@@ -553,53 +587,104 @@ def install_vscode_extension(
     download_url: str | None = None,
     display_name: str | None = None,
 ) -> dict[str, Any]:
+    namespace = validated_plugin_component(namespace, "Extension namespace")
+    extension = validated_plugin_component(extension, "Extension name")
     meta: dict[str, Any] = {}
     if not download_url:
         meta = openvsx_extension(namespace, extension)
         version = version or meta.get("version") or meta.get("latestVersion") or "unknown"
         files = meta.get("files") or {}
         download_url = files.get("download") or files.get("downloadUrl") or meta.get("downloadUrl")
-    version = version or "unknown"
+    version = validated_plugin_component(version or "unknown", "Extension version")
     if not download_url:
         raise ValueError("No downloadable VSIX URL was found for this extension.")
+    download_url = validated_openvsx_download_url(download_url)
     install_dir = VSCODE_PLUGIN_ROOT / f"{namespace}.{extension}@{version}"
-    if install_dir.exists():
-        remove_tree_force(install_dir)
-    install_dir.mkdir(parents=True)
-    vsix_path = install_dir / f"{namespace}.{extension}-{version}.vsix"
-    with requests.get(download_url, stream=True, timeout=120) as response:
-        response.raise_for_status()
-        with vsix_path.open("wb") as handle:
-            for chunk in response.iter_content(chunk_size=1024 * 256):
-                if chunk:
+    staging_dir = VSCODE_PLUGIN_ROOT / f".{namespace}.{extension}@{version}.{uuid.uuid4().hex}.staging"
+    staging_dir.mkdir(parents=True)
+    filename = f"{namespace}.{extension}-{version}.vsix"
+    staging_vsix = staging_dir / filename
+    try:
+        downloaded_bytes = 0
+        with requests.get(download_url, stream=True, timeout=120) as response:
+            response.raise_for_status()
+            content_length = int(response.headers.get("content-length") or 0)
+            if content_length > MAX_VSIX_DOWNLOAD_BYTES:
+                raise ValueError("VSIX download exceeds the allowed size.")
+            with staging_vsix.open("wb") as handle:
+                for chunk in response.iter_content(chunk_size=1024 * 256):
+                    if not chunk:
+                        continue
+                    downloaded_bytes += len(chunk)
+                    if downloaded_bytes > MAX_VSIX_DOWNLOAD_BYTES:
+                        raise ValueError("VSIX download exceeds the allowed size.")
                     handle.write(chunk)
-    package = extract_package_json(vsix_path, install_dir / "extracted")
-    manifest = {
-        "namespace": namespace,
-        "extension": extension,
-        "display_name": display_name or package.get("displayName") or f"{namespace}.{extension}",
-        "version": version,
-        "download_url": download_url,
-        "vsix": str(vsix_path),
-        "installed_at": time.time(),
-        "package": package,
-        "runtime_note": "Installed into OpenClaw plugin store. VS Code API execution requires a compatible adapter or VS Code host.",
-    }
-    if load_config().get("vscode_host_enabled", True):
-        manifest["vscode_host"] = install_vsix_into_vscode(vsix_path)
-        if manifest["vscode_host"].get("installed"):
-            manifest["runtime_note"] = "Installed into OpenClaw plugin store and installed into the local VS Code extension host."
-    (install_dir / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
-    return manifest
+        package = extract_package_json(staging_vsix, staging_dir / "extracted")
+        manifest = {
+            "namespace": namespace,
+            "extension": extension,
+            "display_name": display_name or package.get("displayName") or f"{namespace}.{extension}",
+            "version": version,
+            "download_url": download_url,
+            "vsix": str(install_dir / filename),
+            "installed_at": time.time(),
+            "package": package,
+            "runtime_note": "Installed into OpenClaw plugin store. VS Code API execution requires a compatible adapter or VS Code host.",
+        }
+        if load_config().get("vscode_host_enabled", True):
+            manifest["vscode_host"] = install_vsix_into_vscode(staging_vsix)
+            if manifest["vscode_host"].get("installed"):
+                manifest["runtime_note"] = "Installed into OpenClaw plugin store and installed into the local VS Code extension host."
+        (staging_dir / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+        if install_dir.exists():
+            remove_tree_force(install_dir)
+        staging_dir.replace(install_dir)
+        return manifest
+    except Exception:
+        remove_tree_force(staging_dir)
+        raise
 
 
 def extract_package_json(vsix_path: Path, destination: Path) -> dict[str, Any]:
     metadata: dict[str, Any] = {}
     with zipfile.ZipFile(vsix_path, "r") as archive:
-        archive.extractall(destination)
-        for name in archive.namelist():
-            if name.endswith("extension/package.json"):
-                metadata = json.loads((destination / name).read_text(encoding="utf-8"))
+        members = archive.infolist()
+        if len(members) > MAX_VSIX_FILES:
+            raise ValueError("VSIX contains too many files.")
+        if sum(member.file_size for member in members) > MAX_VSIX_UNCOMPRESSED_BYTES:
+            raise ValueError("VSIX expands beyond the allowed size.")
+
+        validated: list[tuple[zipfile.ZipInfo, Path]] = []
+        destination_root = destination.resolve()
+        for member in members:
+            archive_name = member.filename.replace("\\", "/")
+            parts = [part for part in archive_name.split("/") if part not in {"", "."}]
+            unix_mode = member.external_attr >> 16
+            if (
+                not parts
+                or archive_name.startswith("/")
+                or any(part == ".." for part in parts)
+                or ":" in parts[0]
+                or stat.S_ISLNK(unix_mode)
+            ):
+                raise ValueError(f"VSIX contains an unsafe archive path: {member.filename}")
+            target = destination_root.joinpath(*parts)
+            if destination_root not in target.parents and target != destination_root:
+                raise ValueError(f"VSIX path escapes the installation directory: {member.filename}")
+            validated.append((member, target))
+
+        destination_root.mkdir(parents=True, exist_ok=True)
+        for member, target in validated:
+            if member.is_dir():
+                target.mkdir(parents=True, exist_ok=True)
+                continue
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with archive.open(member, "r") as source, target.open("wb") as output:
+                shutil.copyfileobj(source, output, length=1024 * 1024)
+
+        for member, target in validated:
+            if member.filename.replace("\\", "/").endswith("extension/package.json"):
+                metadata = json.loads(target.read_text(encoding="utf-8"))
                 break
     return metadata
 
@@ -609,7 +694,42 @@ app = Flask(
     template_folder=str(ASSET_ROOT / "templates"),
     static_folder=str(ASSET_ROOT / "static"),
 )
-CORS(app)
+
+
+@app.before_request
+def enforce_same_origin_mutations():
+    """Reject browser cross-site writes while preserving local CLI clients."""
+    if request.method not in MUTATING_METHODS:
+        return None
+    fetch_site = (request.headers.get("Sec-Fetch-Site") or "").strip().lower()
+    if fetch_site == "cross-site":
+        return safe_json_error("Cross-site mutations are not allowed.", 403)
+    origin = (request.headers.get("Origin") or "").strip()
+    if not origin:
+        return None
+    parsed_origin = urlsplit(origin)
+    expected = urlsplit(request.host_url)
+    if (
+        parsed_origin.scheme.lower() != expected.scheme.lower()
+        or parsed_origin.netloc.lower() != expected.netloc.lower()
+        or parsed_origin.path not in {"", "/"}
+        or parsed_origin.query
+        or parsed_origin.fragment
+    ):
+        return safe_json_error("Mutation origin does not match this OpenClaw instance.", 403)
+    return None
+
+
+@app.after_request
+def add_browser_security_headers(response):
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; script-src 'self'; style-src 'self'; "
+        "img-src 'self' data: blob:; connect-src 'self'; object-src 'none'; "
+        "base-uri 'none'; frame-ancestors 'none'"
+    )
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    return response
 
 
 @app.get("/")
