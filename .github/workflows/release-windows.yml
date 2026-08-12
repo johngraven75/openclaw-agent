@@ -97,7 +97,8 @@ jobs:
             }
             if (-not $healthy) { throw 'Frozen OpenClaw health smoke failed' }
           } finally {
-            Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+            & taskkill.exe /PID $process.Id /T /F 2>$null
+            Start-Sleep -Seconds 1
           }
       - name: Build installer and portable ZIP
         shell: pwsh
@@ -134,12 +135,16 @@ jobs:
             }
             if (-not $healthy) { throw 'Installed OpenClaw health smoke failed' }
           } finally {
-            Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+            & taskkill.exe /PID $process.Id /T /F 2>$null
+            Start-Sleep -Seconds 1
           }
           $uninstaller = Join-Path $installDir 'unins000.exe'
           if (-not (Test-Path $uninstaller)) { throw 'Uninstaller was not installed' }
           $uninstall = Start-Process $uninstaller -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -Wait -PassThru
           if ($uninstall.ExitCode -ne 0) { throw "Uninstaller failed with exit code $($uninstall.ExitCode)" }
+          for ($attempt = 0; $attempt -lt 10 -and (Test-Path "$installDir/OpenClaw.exe"); $attempt++) {
+            Start-Sleep -Seconds 1
+          }
           if (Test-Path "$installDir/OpenClaw.exe") { throw 'Uninstaller left the application executable behind' }
       - name: Create SHA-256 manifest
         shell: pwsh
