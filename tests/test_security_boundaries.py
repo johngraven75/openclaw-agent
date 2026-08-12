@@ -68,6 +68,10 @@ class BrowserBoundaryTests(unittest.TestCase):
         self.assertNotIn('addMessage("assistant", "Thinking...")', script)
         self.assertIn("messages: history", script)
 
+    def test_public_build_identity_is_sequential_and_consistent(self):
+        self.assertEqual(openclaw.VERSION, "1.0.10")
+        self.assertEqual(openclaw.BUILD_LABEL, "Build 1.0.10")
+
 
 class OpenVsxBoundaryTests(unittest.TestCase):
     def test_allows_only_openvsx_https_downloads(self):

@@ -4,7 +4,7 @@ OpenClaw is a local desktop-friendly multimodal agent workspace with a Flask bac
 
 ## Build
 
-Current version: **Build 1.0.9**
+Current version: **Build 1.0.10**
 
 ## Features
 
@@ -18,6 +18,8 @@ Current version: **Build 1.0.9**
 - Web search via DuckDuckGo HTML search.
 - Code runner for Python, JavaScript, and PowerShell inside the configured workspace.
 - VS Code-compatible add-on catalog using OpenVSX search and VSIX download into an OpenClaw plugin store.
+- Same-origin API mutation protection and transactional, traversal-safe OpenVSX package installation.
+- Local bundled interface icons with a restrictive browser content policy; no executable UI code is loaded from a CDN.
 - OpenClaw Founders Edition logo splash screen and Windows program icon.
 - Workspace file browser and generated media browser.
 - Browser voice input where the browser supports SpeechRecognition.
@@ -54,3 +56,5 @@ If Hugging Face has a missing, invalid, rejected, unverified, or quota-blocked c
 ## Add-on Store
 
 OpenClaw downloads VS Code-compatible extensions from OpenVSX into `plugins/vscode` and installs them into the local VS Code extension host when the VS Code CLI is available.
+
+Only HTTPS artifacts hosted by `open-vsx.org` are accepted. Packages are size-bounded and fully validated before the previous installed version is replaced.

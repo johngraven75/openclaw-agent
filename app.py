@@ -24,8 +24,8 @@ from flask import Flask, jsonify, render_template, request, send_from_directory
 
 
 APP_NAME = "OpenClaw"
-VERSION = "1.0.9"
-BUILD_LABEL = "Build 1.0.9"
+VERSION = "1.0.10"
+BUILD_LABEL = "Build 1.0.10"
 if getattr(sys, "frozen", False):
     ROOT = Path(sys.executable).resolve().parent
     ASSET_ROOT = Path(getattr(sys, "_MEIPASS", ROOT))

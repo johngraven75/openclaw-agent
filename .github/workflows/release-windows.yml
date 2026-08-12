@@ -1,0 +1,164 @@
+name: Release OpenClaw Windows
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - app.py
+      - BUILD_NOTES.md
+      - packaging/windows/**
+      - .github/workflows/release-windows.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: openclaw-windows-release
+  cancel-in-progress: false
+
+jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.release.outputs.version }}
+      tag: ${{ steps.release.outputs.tag }}
+      should-release: ${{ steps.release.outputs.should_release }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: release
+        name: Resolve sequential release
+        shell: bash
+        run: |
+          version="$(python - <<'PY'
+          import re
+          from pathlib import Path
+          source = Path('app.py').read_text(encoding='utf-8')
+          match = re.search(r'^VERSION = "([0-9]+\.[0-9]+\.[0-9]+)"$', source, re.MULTILINE)
+          if not match:
+              raise SystemExit('app.py does not contain a valid VERSION constant')
+          print(match.group(1))
+          PY
+          )"
+          tag="v$version"
+          grep -F "Build $version" BUILD_NOTES.md >/dev/null
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1; then
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+            echo "$tag already exists; no duplicate release will be built."
+          else
+            echo "should_release=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  build-windows:
+    needs: resolve
+    if: needs.resolve.outputs.should-release == 'true'
+    runs-on: windows-latest
+    env:
+      OPENCLAW_VERSION: ${{ needs.resolve.outputs.version }}
+      RELEASE_TAG: ${{ needs.resolve.outputs.tag }}
+      PYTHONUTF8: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Install build dependencies
+        run: python -m pip install --requirement requirements.txt pyinstaller==6.16.0
+      - name: Validate source
+        run: |
+          python -m compileall -q app.py tests
+          python -m unittest discover -s tests -p "test_*.py" -v
+      - name: Build frozen executable
+        shell: pwsh
+        run: |
+          pyinstaller --noconfirm --clean --onefile --windowed --name OpenClaw --icon static/img/openclaw.ico --add-data "templates;templates" --add-data "static;static" app.py
+          if (-not (Test-Path dist/OpenClaw.exe)) { throw 'PyInstaller did not produce OpenClaw.exe' }
+      - name: Smoke-test frozen executable
+        shell: pwsh
+        run: |
+          $env:OPENCLAW_NO_BROWSER = '1'
+          $env:OPENCLAW_PORT = '17865'
+          $process = Start-Process -FilePath "$PWD/dist/OpenClaw.exe" -PassThru
+          try {
+            $healthy = $false
+            for ($attempt = 0; $attempt -lt 30 -and -not $healthy; $attempt++) {
+              Start-Sleep -Seconds 1
+              try {
+                $health = Invoke-RestMethod 'http://127.0.0.1:17865/api/health' -TimeoutSec 2
+                if ($health.version -eq $env:OPENCLAW_VERSION) { $healthy = $true }
+              } catch {}
+            }
+            if (-not $healthy) { throw 'Frozen OpenClaw health smoke failed' }
+          } finally {
+            Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+          }
+      - name: Build installer and portable ZIP
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force release, portable | Out-Null
+          Copy-Item dist/OpenClaw.exe portable/OpenClaw.exe
+          Copy-Item README.md, BUILD_NOTES.md portable/
+          Compress-Archive -Path portable/* -DestinationPath "release/OpenClaw-Build-$env:OPENCLAW_VERSION-Portable-Windows.zip" -CompressionLevel Optimal
+          $env:OPENCLAW_SOURCE_EXE = "$PWD/dist/OpenClaw.exe"
+          $env:OPENCLAW_RELEASE_DIR = "$PWD/release"
+          $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6/ISCC.exe'
+          if (-not (Test-Path $iscc)) { throw 'Inno Setup 6 was not found on the Windows runner' }
+          & $iscc packaging/windows/OpenClaw.iss
+          if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed with exit code $LASTEXITCODE" }
+      - name: Smoke-test silent install
+        shell: pwsh
+        run: |
+          $installer = Get-Item "release/OpenClaw-Build-$env:OPENCLAW_VERSION-Windows-Setup.exe"
+          $installDir = Join-Path $env:RUNNER_TEMP 'OpenClawInstallSmoke'
+          $install = Start-Process $installer.FullName -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',("/DIR=$installDir") -Wait -PassThru
+          if ($install.ExitCode -ne 0) { throw "Installer failed with exit code $($install.ExitCode)" }
+          if (-not (Test-Path "$installDir/OpenClaw.exe")) { throw 'Installed OpenClaw.exe was not found' }
+          $env:OPENCLAW_NO_BROWSER = '1'
+          $env:OPENCLAW_PORT = '17866'
+          $process = Start-Process -FilePath "$installDir/OpenClaw.exe" -PassThru
+          try {
+            $healthy = $false
+            for ($attempt = 0; $attempt -lt 30 -and -not $healthy; $attempt++) {
+              Start-Sleep -Seconds 1
+              try {
+                $health = Invoke-RestMethod 'http://127.0.0.1:17866/api/health' -TimeoutSec 2
+                if ($health.version -eq $env:OPENCLAW_VERSION) { $healthy = $true }
+              } catch {}
+            }
+            if (-not $healthy) { throw 'Installed OpenClaw health smoke failed' }
+          } finally {
+            Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+          }
+          $uninstaller = Join-Path $installDir 'unins000.exe'
+          if (-not (Test-Path $uninstaller)) { throw 'Uninstaller was not installed' }
+          $uninstall = Start-Process $uninstaller -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -Wait -PassThru
+          if ($uninstall.ExitCode -ne 0) { throw "Uninstaller failed with exit code $($uninstall.ExitCode)" }
+          if (Test-Path "$installDir/OpenClaw.exe") { throw 'Uninstaller left the application executable behind' }
+      - name: Create SHA-256 manifest
+        shell: pwsh
+        run: |
+          $assets = Get-ChildItem release -File | Sort-Object Name
+          $lines = foreach ($asset in $assets) {
+            $hash = (Get-FileHash $asset.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            "$hash  $($asset.Name)"
+          }
+          $lines | Set-Content release/SHA256SUMS.txt -Encoding utf8NoBOM
+      - uses: actions/upload-artifact@v4
+        with:
+          name: OpenClaw-${{ env.RELEASE_TAG }}-Windows
+          path: release/*
+          if-no-files-found: error
+          retention-days: 30
+      - name: Publish immutable GitHub release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$RELEASE_TAG" release/* --target "$GITHUB_SHA" --title "OpenClaw ${RELEASE_TAG#v}" --notes-file BUILD_NOTES.md
