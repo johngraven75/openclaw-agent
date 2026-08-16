@@ -562,13 +562,12 @@ def install_vsix_into_vscode(vsix_path: Path) -> dict[str, Any]:
     cli = find_vscode_cli()
     if not cli:
         return {"attempted": False, "installed": False, "reason": "VS Code CLI was not found."}
-    command = f'"{cli}" --install-extension "{vsix_path}" --force'
     proc = subprocess.run(
-        command,
+        [cli, "--install-extension", str(vsix_path), "--force"],
         capture_output=True,
         text=True,
         timeout=180,
-        shell=True,
+        check=False,
     )
     return {
         "attempted": True,
